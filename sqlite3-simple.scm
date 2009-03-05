@@ -2,14 +2,14 @@
 
 (define-syntax define-foreign-enum-type
   (syntax-rules ()
-    ((_ (type-name native-type)
+    ((_ (type-name native-type default-value)
         (to-native from-native)
         ((symbol var-name) native-name) ...)
      (begin (define-foreign-type type-name native-type to-native from-native)
             (define-foreign-variable var-name native-type native-name) ...
             (define (from-native val)
               (cond ((= val var-name) symbol) ...
-                    (else '())))
+                    (else default-value)))
             (define (to-native syms)
               (let loop ((syms (if (symbol? syms) (list syms) syms))
                          (sum 0))
@@ -31,8 +31,8 @@
      
      
      )
-
-    ))
+    ((_ (type-name native-type) rest ...)
+     (define-foreign-enum-type (type-name native-type '()) rest ...))))
 
   (define (sqlite3:type->number syms)
     (let loop ((syms (if (symbol? syms) (list syms) syms)) (sum 0))
