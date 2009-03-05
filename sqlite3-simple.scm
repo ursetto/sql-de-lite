@@ -1,14 +1,31 @@
 ;; missing: (type-name native-type scheme-value)
 
+(define-syntax %optional
+  (syntax-rules ()
+    ((_ sym default) default)
+    ((_ sym) sym)))
+
+;; won't work :
+(define-syntax %crap
+  (syntax-rules ()
+    ((_ ((symbol var-name) native-name var-default-value))
+     ((symbol var-name) native-name var-default-value))
+    ((_ ((symbol var-name) native-name))
+     ((symbol var-name) native-name 'symbol))
+    ((_ (symbol native-name . var-default-value))
+     ((symbol symbol) native-name . var-default-value))))
+
 (define-syntax define-foreign-enum-type
   (syntax-rules ()
-    ((_ (type-name native-type default-value)
+    ((_ (type-name native-type ;default-value
+                   )
         (to-native from-native)
         ((symbol var-name) native-name) ...)
      (begin (define-foreign-type type-name native-type to-native from-native)
             (define-foreign-variable var-name native-type native-name) ...
             (define (from-native val)
-              (cond ((= val var-name) symbol) ...
+              (cond ((= val var-name) var-name) ; var-value
+                    ...
                     (else default-value)))
             (define (to-native syms)
               (let loop ((syms (if (symbol? syms) (list syms) syms))
@@ -23,16 +40,100 @@
                                ((symbol) var-name) ...
                                (else
                                 (error "not a member of enum" val
-                                       'type-name))))))))
+                                       'type-name)))))))))))
+    ;; ignored.  Chicken 4 bug where (foo (a b) ...) matches (foo (1))
+    ((_ (type-name native-type) . rest)
+     (%define-foreign-enum-type (type-name native-type '()) . rest))
+    ))
 
-              )
+(require-extension matchable)
+(import-for-syntax matchable)
+ 
+;;            (with-renamed r (begin default define-foreign-type)
+;;                          `(,begin_ hi))
+(define-syntax define-foreign-enum-type-2
+  (lambda (f r c)
+    (match
+     f
+     ((_ (type-name native-type default-value)
+         (to-native from-native)
+         enumspecs ...)
+      (let ((enums (map (lambda (spec)
+                          (match spec
+                                 (((s v) n d) spec)
+                                 (((s v) n)   `((,s ,v) ,n ',s))
+                                 (((s) n d)   `((,s ,(gensym)) ,n ,d))
+                                 (((s) n)     `((,s ,(gensym)) ,n ',s))
+                                 ((s n d)     `((,s ,s) ,n ,d))
+                                 ((s n)       `((,s ,s) ,n ',s))
+                                 (else
+                                  (error 'default-foreign-enum-type
+                                         "error in enum spec" spec))))
+                        enumspecs))
+            (begin_ (r 'begin))
+            (define_ (r 'define))
+            (define-foreign-type_ (r 'define-foreign-type))
+            (define-foreign-variable_ (r 'define-foreign-variable))
+            (cond_ (r 'cond)) (else_ (r 'else)) (if_ (r 'if)) (let_ (r 'let))
+            (symbol?_ (r 'symbol?)) (list_ (r 'list))
+            (null?_ (r 'null?)) (car_ (r 'car)) (cdr_ (r 'cdr))
+            (case_ (r 'case)) (bitwise-ior_ (r 'bitwise-ior))
+            (error_ (r 'error)))
+        
+        `(,begin_
+          (,define-foreign-type_ ,type-name
+            ,native-type ,to-native ,from-native)
+          
+          ,@(map (lambda (e)
+                   (match-let ([ ((s var) name d) e ])
+                     `(,define-foreign-variable_ ,var ,native-type ,name)))
+                 enums)
 
-            )
-     
-     
-     )
-    ((_ (type-name native-type) rest ...)
-     (define-foreign-enum-type (type-name native-type '()) rest ...))))
+          (,define_ (,from-native val)
+           (,cond_
+            ,@(map (lambda (e)
+                     (match-let ([ ((s name) n value) e ])
+                       `((,(r '=) val ,name) ,value)))
+                   enums)
+            (,else_ ,default-value)))
+
+          (,define_ (,to-native syms)
+            (,let_ loop ((syms (,if_ (,symbol?_ syms) (,list_ syms) syms))
+                         (sum 0))
+              (,if_ (,null?_ syms)
+                  sum
+                  (loop (,cdr_ syms)
+                        (,bitwise-ior_
+                         sum
+                         (,let_ ((val (,car_ syms)))
+                           (,case_
+                            val
+                            ,@(map (lambda (e)
+                                     (match-let ([((symbol name) n d) e])
+                                       `((,symbol) ,name)))
+                                   enums)
+
+                            (,else_ (,error_ "not a member of enum" val
+                                             ',type-name)))))))))
+          )))
+
+     ; handle missing default-value
+     ((_ (type-name native-type) . rest)
+      `(define-foreign-enum-type-2 (,type-name ,native-type '()) ,@rest))
+     )))
+
+
+ (define D (lambda (f r c)
+             (print f)
+             (match f ((_ (type-name native-type)
+                          (to-native from-native)
+                          enum ...)
+                       `(define-foreign-type ,type-name ,native-type ,to-native ,from-native)
+            
+
+                       ))))
+
+ (define D (lambda (f r c) (match f (((_ (type-name native-type)) `(list type-name native-type))))))
 
   (define (sqlite3:type->number syms)
     (let loop ((syms (if (symbol? syms) (list syms) syms)) (sum 0))
