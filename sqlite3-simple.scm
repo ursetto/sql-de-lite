@@ -49,8 +49,25 @@
 (require-extension matchable)
 (import-for-syntax matchable)
  
-;;            (with-renamed r (begin default define-foreign-type)
-;;                          `(,begin_ hi))
+;; (with-renamed r (begin car cdr) body ...)
+;; -> (let ((begin_ (r 'begin)) (car_ (r 'car)) (cdr_ (r 'cdr)))
+;;      body ...)
+(module renamed (with-renamed)
+  (define-syntax with-renamed
+    (lambda (f r c)
+      (##sys#check-syntax 'with-renamed f '(_ _ (_ . _) . _))
+      (let ((renamer (cadr f))
+            (identifiers (caddr f))
+            (body (cdddr f))
+            (munger (lambda (x) (string->symbol
+                            (string-append (symbol->string x) "_")))))
+        `(,(r 'let)
+          ,(map (lambda (x)
+                  `(,(munger x) (,renamer ',x)))
+                identifiers)
+          ,@body)))))
+
+(import-for-syntax renamed)
 (define-syntax define-foreign-enum-type-2
   (lambda (f r c)
     (match
@@ -69,53 +86,47 @@
                                  (else
                                   (error 'default-foreign-enum-type
                                          "error in enum spec" spec))))
-                        enumspecs))
-            (begin_ (r 'begin))
-            (define_ (r 'define))
-            (define-foreign-type_ (r 'define-foreign-type))
-            (define-foreign-variable_ (r 'define-foreign-variable))
-            (cond_ (r 'cond)) (else_ (r 'else)) (if_ (r 'if)) (let_ (r 'let))
-            (symbol?_ (r 'symbol?)) (list_ (r 'list))
-            (null?_ (r 'null?)) (car_ (r 'car)) (cdr_ (r 'cdr))
-            (case_ (r 'case)) (bitwise-ior_ (r 'bitwise-ior))
-            (error_ (r 'error)))
-        
-        `(,begin_
-          (,define-foreign-type_ ,type-name
-            ,native-type ,to-native ,from-native)
-          
-          ,@(map (lambda (e)
-                   (match-let ([ ((s var) name d) e ])
-                     `(,define-foreign-variable_ ,var ,native-type ,name)))
-                 enums)
+                        enumspecs)))
+        (with-renamed
+         r (begin define cond else if let symbol? list null?
+                  car cdr case bitwise-ior error =
+                  define-foreign-type define-foreign-variable)
 
-          (,define_ (,from-native val)
-           (,cond_
-            ,@(map (lambda (e)
-                     (match-let ([ ((s name) n value) e ])
-                       `((,(r '=) val ,name) ,value)))
-                   enums)
-            (,else_ ,default-value)))
+         `(,begin_
+           (,define-foreign-type_ ,type-name
+             ,native-type ,to-native ,from-native)
+           
+           ,@(map (lambda (e)
+                    (match-let ([ ((s var) name d) e ])
+                      `(,define-foreign-variable_ ,var ,native-type ,name)))
+                  enums)
 
-          (,define_ (,to-native syms)
-            (,let_ loop ((syms (,if_ (,symbol?_ syms) (,list_ syms) syms))
-                         (sum 0))
-              (,if_ (,null?_ syms)
-                  sum
-                  (loop (,cdr_ syms)
-                        (,bitwise-ior_
-                         sum
-                         (,let_ ((val (,car_ syms)))
-                           (,case_
-                            val
-                            ,@(map (lambda (e)
-                                     (match-let ([((symbol name) n d) e])
-                                       `((,symbol) ,name)))
-                                   enums)
+           (,define_ (,from-native val)
+             (,cond_
+              ,@(map (lambda (e)
+                       (match-let ([ ((s var) n value) e ])
+                         `((,=_ val ,var) ,value)))
+                     enums)
+              (,else_ ,default-value)))
 
-                            (,else_ (,error_ "not a member of enum" val
-                                             ',type-name)))))))))
-          )))
+           (,define_ (,to-native syms)
+             (,let_ loop ((syms (,if_ (,symbol?_ syms) (,list_ syms) syms))
+                          (sum 0))
+               (,if_ (,null?_ syms)
+                     sum
+                     (loop (,cdr_ syms)
+                           (,bitwise-ior_
+                            sum
+                            (,let_ ((val (,car_ syms)))
+                              (,case_
+                               val
+                               ,@(map (lambda (e)
+                                        (match-let ([((symbol var) n d) e])
+                                          `((,symbol) ,var)))
+                                      enums)
+                               (,else_ (,error_ "not a member of enum" val
+                                                ',type-name)))))))))
+           ))))
 
      ; handle missing default-value
      ((_ (type-name native-type) . rest)
