@@ -17,6 +17,8 @@
    raise-errors
    raise-database-error
    finalize step
+   column-count column-type column-data
+   reset   ; core binding!
 
    ;; debugging
    int->status status->int             
@@ -25,7 +27,7 @@
 
   (import scheme chicken)
   (import (only extras fprintf sprintf))
-  (import (only lolevel pointer->address))
+  (import (only lolevel pointer->address move-memory!))
   (import foreign foreigners easyffi)
 
 #>? #include "sqlite3-api.h" <#
@@ -166,34 +168,67 @@
               (else
                (database-error db 'prepare sql))))))
 
-  ;; with prepare_v2: sqlite3_step() will automatically recompile
-  ;; a SQL statement and try to run it again, if the db schema changes.
   ;; return #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE
-  ;; alt name.. step-statement ?
-
-  ;; "SQLITE_BUSY: If the statement is a COMMIT or occurs outside of an explicit
-  ;; transaction, then you can retry the statement. If the statement
-  ;; is not a COMMIT and occurs within a explicit transaction then you
-  ;; should rollback the transaction before continuing."
   (define (step stmt)
     (let ((rv (sqlite3_step (nonnull-sqlite-statement-ptr stmt))))
       (cond ((= rv status/row) 'row)
             ((= rv status/done) 'done)
             ((= rv status/misuse)      ;; Error code/msg may not be set! :(
              (error 'step "misuse of interface"))
+            ;; sqlite3_step handles SCHEMA error itself.
             (else
              (database-error (sqlite-statement-db stmt) 'step)))))
 
   (define (finalize stmt)
     (let ((rv (sqlite3_finalize (nonnull-sqlite-statement-ptr stmt))))
       (cond ((= rv status/ok) #t)
-            (else
-             (database-error (sqlite-statement-db stmt) 'finalize)))))
+            (else (database-error (sqlite-statement-db stmt) 'finalize)))))
+
+  (define (reset stmt)   ; duplicates core binding
+    (let ((rv (sqlite3_reset (nonnull-sqlite-statement-ptr stmt))))
+      (cond ((= rv status/ok) #t)
+            (else (database-error (sqlite-statement-db stmt) 'reset)))))
+
+  (define (execute stmt . params)
+    (and (reset stmt)
+         ;; (apply bind-parameters stmt params)
+         ;; if returned columns = 0, step until done and return # changes
+         ;; otherwise, done
+         ))
+
+  (define (bind-parameters stmt . params)
+    (void))
+
+  ;; 
+  (define (bind stmt index param)
+    (void))
+
+  (define (column-count stmt)
+    (sqlite3_column_count (nonnull-sqlite-statement-ptr stmt)))
+  (define (column-type stmt i)
+    (int->type
+     (sqlite3_column_type (nonnull-sqlite-statement-ptr stmt) i)))
+  (define (column-data stmt i)
+    (let ((stmt-ptr (nonnull-sqlite-statement-ptr stmt)))
+      (case (column-type stmt i)
+        ((integer) (sqlite3_column_int stmt-ptr i))
+        ((float)   (sqlite3_column_double stmt-ptr i))
+        ((text)    (sqlite3_column_text stmt-ptr i)) ; WARNING: NULs allowed??
+        ((blob)    (let ((b (make-blob (sqlite3_column_bytes stmt-ptr i))))
+                     (move-memory! (sqlite3_column_blob stmt-ptr i) b)))
+        ((null)    '())
+        (else
+         (error 'column-data "illegal type"))))) ; assertion
+
+  ;; retrieve all columns from current row (?)
+  (define (row-data stmt)
+    (void)
+    )
 
   ;; If errors are off, user can't retrieve error message as we
   ;; return #f instead of db; though it's probably SQLITE_CANTOPEN.
   ;; Perhaps this should always throw an error.
-  ;; NULL (#f) filename allowed, creates private on-disk database.
+  ;; NULL (#f) filename allowed, creates private on-disk database.  
   (define (open-database filename)
     (let-location ((db-ptr (c-pointer "sqlite3")))
       (let* ((rv (sqlite3_open filename (location db-ptr)))
@@ -255,7 +290,27 @@
 (use sqlite3-simple)
 (raise-errors #t)
 (define db (open-database "a.db"))
-(define stmt (prepare db "create table cache(id primary key, text);"))
+(define stmt (prepare db "create table cache(key text primary key, val text);"))
 (step stmt)
-
+(step (prepare db "insert into cache values('ostrich', 'bird');"))
+(step (prepare db "insert into cache values('orangutan', 'monkey');"))
+(define stmt2 (prepare db "select rowid, key, val from cache;"))
+(step stmt2)
+(column-count stmt2)  ; => 3
+(column-type stmt2 0) ; => integer
+(column-type stmt2 1) ; => text
+(column-type stmt2 2) ; => text
+(column-data stmt2 0) ; => 1
+(column-data stmt2 1) ; => "ostrich"
+(column-data stmt2 2) ; => "orangutan"
 |#
+
+;;; Notes
+
+
+  ;; "step SQLITE_BUSY: If the statement is a COMMIT or occurs outside
+  ;; of an explicit transaction, then you can retry the statement. If
+  ;; the statement is not a COMMIT and occurs within a explicit
+  ;; transaction then you should rollback the transaction before
+  ;; continuing."
+
