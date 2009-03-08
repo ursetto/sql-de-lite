@@ -1,3 +1,5 @@
+/* NOTE: pointers are not being checked for NULL. */
+
 int sqlite3_close(sqlite3 *);
 int sqlite3_exec(
   sqlite3*,                                  /* An open database */
@@ -20,4 +22,9 @@ int sqlite3_prepare_v2(
   sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
   const char **pzTail     /* OUT: Pointer to unused portion of zSql */
 );
+sqlite3_stmt *sqlite3_next_stmt(sqlite3 *pDb, sqlite3_stmt *pStmt);
+int sqlite3_step(sqlite3_stmt *);
+int sqlite3_finalize(sqlite3_stmt *pStmt);
+const char *sqlite3_sql(sqlite3_stmt *pStmt);
+
 
