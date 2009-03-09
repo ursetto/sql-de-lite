@@ -228,7 +228,9 @@
   (define (bind stmt i x)
     (when (or (< i 1)
               (> i (bind-parameter-count stmt)))
-      ;; Should this throw an error?
+      ;; Should we test for this (and treat as error)?
+      ;; SQLite will catch this and return a range error.
+      ;; An indexing error should arguably be an immediate error...
       (error 'bind "index out of range" i))
     (let ((ptr (nonnull-sqlite-statement-ptr stmt)))
       (let ((rv 
@@ -269,8 +271,10 @@
         ((integer) (sqlite3_column_int stmt-ptr i))
         ((float)   (sqlite3_column_double stmt-ptr i))
         ((text)    (sqlite3_column_text stmt-ptr i)) ; WARNING: NULs allowed??
-        ((blob)    (let ((b (make-blob (sqlite3_column_bytes stmt-ptr i))))
-                     (move-memory! (sqlite3_column_blob stmt-ptr i) b (blob-size b))
+        ((blob)    (let ((b (make-blob (sqlite3_column_bytes stmt-ptr i)))
+                         (%copy! (foreign-lambda c-pointer "C_memcpy"
+                                                 scheme-pointer c-pointer int)))
+                     (%copy! b (sqlite3_column_blob stmt-ptr i) (blob-size b))
                      b))
         ((null)    '())
         (else
@@ -385,6 +389,9 @@
 (define stmt3 (prepare db "select rowid, key, val from cache where key = ?;"))
 (fetch (bind (reset stmt3) 1 "orangutan"))
 (fetch (bind (reset stmt3) 1 (string->blob "orangutan")))
+(step (bind (prepare db "insert into cache values(?, 'z');")
+            1 (string->blob "orange2")))
+(fetch (bind (reset stmt3) 1 (string->blob "orange2")))
 (fetch stmt3)
 (define stmt4 (prepare db "select rowid, key, val from cache where rowid = ?;"))
 (fetch (bind (reset stmt4) 1 2))
