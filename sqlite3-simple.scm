@@ -13,7 +13,7 @@
    ;; API
    error-code error-message
    open-database close-database
-   prepare fetch
+   prepare fetch fetch-alist
    raise-errors
    raise-database-error
    finalize step
@@ -129,9 +129,15 @@
         ((done) '())   ; could set guard to prevent further steps
         ((row) (row-data stmt))
         (else
-         (error 'fetch "internal error: step result invalid" rv)))
-      ))
-
+         (error 'fetch "internal error: step result invalid" rv)))))
+  (define (fetch-alist stmt)     ; nearly identical to (fetch)
+    (and-let* ((rv (step stmt)))
+      (case rv
+        ((done) '())
+        ((row) (row-alist stmt))
+        (else
+         (error 'fetch "internal error: step result invalid" rv)))))
+  
 ;;   (let ((st (prepare db "select k, v from cache where k = ?;")))
 ;;     (do ((i 0 (+ i 1)))
 ;;         ((> i 100))
@@ -229,10 +235,13 @@
              (cond ((string? x)
                     (sqlite3_bind_text ptr i x (string-length x)
                                        destructor-type/transient))
-                   ((exact? x) status/misuse)
-                   ((number? x) status/misuse)
-                   ((blob? x) status/misuse)
-                   ((null? x) status/misuse)
+                   ((exact? x)
+                    (sqlite3_bind_int ptr i x))
+                   ((number? x)
+                    (sqlite3_bind_double ptr i x))
+                   ((blob? x) (error 'bind "blob not implemented"))
+                   ((null? x)
+                    (sqlite3_bind_null ptr i))
                    ;;        ((boolean? value))
                    )))
         (cond ((= rv status/ok) stmt)
@@ -373,6 +382,8 @@
 (define stmt3 (prepare db "select rowid, key, val from cache where key = ?;"))
 (fetch (bind (reset stmt3) 1 "orangutan"))
 (fetch stmt3)
+(define stmt4 (prepare db "select rowid, key, val from cache where rowid = ?;"))
+(fetch (bind (reset stmt4) 1 2))
 
 
 ;; note: test insertion of a blob into a text field, with an embedded null;
