@@ -14,13 +14,14 @@
    error-code error-message
    open-database close-database
    prepare fetch fetch-alist
-   raise-errors
+   raise-database-errors
    raise-database-error
    finalize step
    column-count column-name column-type column-data
    bind bind-parameters bind-parameter-count
    row-data row-alist
    reset   ; core binding!
+   call-with-database
 
    ;; debugging
    int->status status->int             
@@ -86,7 +87,7 @@
   (define-foreign-variable destructor-type/static
     sqlite3:destructor-type "SQLITE_STATIC")
   
-  (define raise-errors (make-parameter #f))
+  (define raise-database-errors (make-parameter #f))
   
   (define (exec-sql db sql . params)
     (if (null? params)
@@ -341,12 +342,27 @@
              #t)
             (else #f))))
 
+  (define-syntax begin0
+    (syntax-rules () ((_ e0 e1 ...)
+                      (let ((tmp e0)) e1 ... tmp))))
   (define (call-with-prepared-statement db sql proc)
-    (void)
-    )
+    (let ((stmt (prepare db sql)))
+      (begin0 (proc stmt)                     ; ignore exceptions
+        (finalize stmt))))
   (define (call-with-prepared-statements db sqls proc)  ; sqls is list
-    (void)
-    )
+    (let ((stmts (map (lambda (s) (prepare db s))
+                      sqls)))
+      (begin0 (apply proc stmts)
+        (for-each (lambda (s) (if s (finalize s)))
+                  stmts))))
+
+  (define (call-with-database filename proc)
+    (let ((db (open-database filename)))
+      (handle-exceptions exn
+          (begin (close-database db)
+                 (signal exn))
+        (begin0 (proc db)
+          (close-database db)))))
 
   ;; (I think (void) and '() should both be treated as NULL)
   ;; careful of return value conflict with '() meaning SQLITE_DONE though
@@ -388,10 +404,16 @@
 (fetch (bind (reset stmt3) 1 (string->blob "orangutan"))) ; fails.  dunno why
 (step (bind (prepare db "insert into cache values(?, 'z');")
             1 (string->blob "orange2")))
-(blob->string (cadr (fetch (bind (reset stmt3) 1 (string->blob "orange2"))))) ; -> "orange2"
+(blob->string (alist-ref 'key (fetch-alist (bind (reset stmt3) 1 (string->blob "orange2"))))) ; -> "orange2"
 (fetch stmt3)
 (define stmt4 (prepare db "select rowid, key, val from cache where rowid = ?;"))
 (fetch (bind (reset stmt4) 1 2))
+
+(call-with-database "a.db" (lambda (db) (fetch (prepare db "select * from cache;"))))
+  ; -> ("ostrich" "bird")  + finalization warning
+
+(call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, value from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))   ; #f (or error) -- invalid column name
+(call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, val from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))     ; (("ostrich" "bird") (1 "ostrich" "bird"))
 
 
 ;; note: test insertion of a blob into a text field, with an embedded null;
