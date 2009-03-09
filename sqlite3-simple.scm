@@ -17,7 +17,9 @@
    raise-errors
    raise-database-error
    finalize step
-   column-count column-type column-data
+   column-count column-name column-type column-data
+   bind-parameter-count
+   row-data row-alist
    reset   ; core binding!
 
    ;; debugging
@@ -116,11 +118,8 @@
   (define (fetch stmt)
     (and-let* ((rv (step stmt)))
       (case rv
-        ((done) '())
-        ((row)
-         
-
-         )
+        ((done) '())   ; could set guard to prevent further steps
+        ((row) (row-data stmt))
         (else
          (error 'fetch "internal error: step result invalid" rv)))
       ))
@@ -134,7 +133,8 @@
 ;;              (() (error "no such key" k))))
 ;;     (finalize! st))
 
-  (define-record sqlite-statement ptr sql db)
+  (define-record sqlite-statement ptr sql db
+    column-count column-names parameter-count)
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
              (sqlite-statement-sql s)))
@@ -150,7 +150,6 @@
              (or (sqlite-database-ptr db)
                  "(closed)")
              (sqlite-database-filename db)))
-
   ;; May return #f even on SQLITE_OK, which means the statement contained
   ;; only whitespace and comments and nothing was compiled.
   (define (prepare db sql)
@@ -162,7 +161,10 @@
                                     #f)))
         (cond ((= rv status/ok)
                (if stmt
-                   (make-sqlite-statement stmt sql db)
+                   (let* ((ncol (sqlite3_column_count stmt))
+                          (nparam (sqlite3_bind_parameter_count stmt))
+                          (names (make-vector ncol #f)))
+                     (make-sqlite-statement stmt sql db ncol names nparam))
                    #f)) ; not an error, even when raising errors
               ;; ((= rv status/busy (retry))) 
               (else
@@ -202,12 +204,20 @@
   ;; 
   (define (bind stmt index param)
     (void))
+  (define bind-parameter-count sqlite-statement-parameter-count)
 
-  (define (column-count stmt)
-    (sqlite3_column_count (nonnull-sqlite-statement-ptr stmt)))
+  (define column-count sqlite-statement-column-count)
+  (define (column-name stmt i)
+    (let ((v (sqlite-statement-column-names stmt)))
+      (or (vector-ref v i)
+          (let ((name (string->symbol
+                       (sqlite3_column_name (nonnull-sqlite-statement-ptr stmt)
+                                            i))))
+            (vector-set! v i name)
+            name))))
   (define (column-type stmt i)
-    (int->type
-     (sqlite3_column_type (nonnull-sqlite-statement-ptr stmt) i)))
+    ;; can't be cached, only valid for current row
+    (int->type (sqlite3_column_type (nonnull-sqlite-statement-ptr stmt) i)))
   (define (column-data stmt i)
     (let ((stmt-ptr (nonnull-sqlite-statement-ptr stmt)))
       (case (column-type stmt i)
@@ -220,10 +230,27 @@
         (else
          (error 'column-data "illegal type"))))) ; assertion
 
-  ;; retrieve all columns from current row (?)
+  ;; Retrieve all columns from current row.  Does not coerce DONE
+  ;; to '().
   (define (row-data stmt)
-    (void)
-    )
+    (let ((ncol (column-count stmt)))
+      (let loop ((i 0))
+        (if (fx>= i ncol)
+            '()
+            (cons (column-data stmt i)
+                  (loop (fx+ i 1)))))))
+
+  ;; Speedup: cache these symbols in the statement record.  Column
+  ;; count might be good too.  We could do this at prepare time,
+  ;; I believe.
+  (define (row-alist stmt)
+    (let ((ncol (column-count stmt)))
+      (let loop ((i 0))
+        (if (fx>= i ncol)
+            '()
+            (cons (cons (column-name stmt i)
+                        (column-data stmt i))
+                  (loop (fx+ i 1)))))))
 
   ;; If errors are off, user can't retrieve error message as we
   ;; return #f instead of db; though it's probably SQLITE_CANTOPEN.
@@ -287,13 +314,17 @@
 
 #|
 
+
+(begin
+  (define stmt (prepare db "create table cache(key text primary key, val text);"))
+  (step stmt)
+  (step (prepare db "insert into cache values('ostrich', 'bird');"))
+  (step (prepare db "insert into cache values('orangutan', 'monkey');"))
+)
+
 (use sqlite3-simple)
 (raise-errors #t)
 (define db (open-database "a.db"))
-(define stmt (prepare db "create table cache(key text primary key, val text);"))
-(step stmt)
-(step (prepare db "insert into cache values('ostrich', 'bird');"))
-(step (prepare db "insert into cache values('orangutan', 'monkey');"))
 (define stmt2 (prepare db "select rowid, key, val from cache;"))
 (step stmt2)
 (column-count stmt2)  ; => 3
@@ -303,6 +334,12 @@
 (column-data stmt2 0) ; => 1
 (column-data stmt2 1) ; => "ostrich"
 (column-data stmt2 2) ; => "orangutan"
+(row-data stmt2)
+(row-alist stmt2)
+
+;; note: test insertion of a blob into a text field, with an embedded null;
+;; then see if you can read the whole thing out with sqlite3_column_text
+;; or if it is terminated at first embedded null.
 |#
 
 ;;; Notes
