@@ -32,7 +32,8 @@ const char *sqlite3_sql(sqlite3_stmt *pStmt);
 int sqlite3_bind_parameter_count(sqlite3_stmt*);
 int sqlite3_bind_parameter_index(sqlite3_stmt*, const char *zName);
 const char *sqlite3_bind_parameter_name(sqlite3_stmt*, int);
-int sqlite3_bind_blob(sqlite3_stmt*, int, const void*, int n, void(*)(void*));
+int sqlite3_bind_blob(sqlite3_stmt*, int, ___byte_vector b,
+                      int n, void(*)(void*));
 int sqlite3_bind_double(sqlite3_stmt*, int, double);
 int sqlite3_bind_int(sqlite3_stmt*, int, int);
 /*int sqlite3_bind_int64(sqlite3_stmt*, int, sqlite3_int64);*/
