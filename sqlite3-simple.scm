@@ -281,7 +281,7 @@
          (error 'column-data "illegal type"))))) ; assertion
 
   ;; Retrieve all columns from current row.  Does not coerce DONE
-  ;; to '().
+  ;; to '(); instead returns NULL for all columns.
   (define (row-data stmt)
     (let ((ncol (column-count stmt)))
       (let loop ((i 0))
@@ -290,9 +290,6 @@
             (cons (column-data stmt i)
                   (loop (fx+ i 1)))))))
 
-  ;; Speedup: cache these symbols in the statement record.  Column
-  ;; count might be good too.  We could do this at prepare time,
-  ;; I believe.
   (define (row-alist stmt)
     (let ((ncol (column-count stmt)))
       (let loop ((i 0))
@@ -388,10 +385,10 @@
 (row-alist stmt2)
 (define stmt3 (prepare db "select rowid, key, val from cache where key = ?;"))
 (fetch (bind (reset stmt3) 1 "orangutan"))
-(fetch (bind (reset stmt3) 1 (string->blob "orangutan")))
+(fetch (bind (reset stmt3) 1 (string->blob "orangutan"))) ; fails.  dunno why
 (step (bind (prepare db "insert into cache values(?, 'z');")
             1 (string->blob "orange2")))
-(fetch (bind (reset stmt3) 1 (string->blob "orange2")))
+(blob->string (cadr (fetch (bind (reset stmt3) 1 (string->blob "orange2"))))) ; -> "orange2"
 (fetch stmt3)
 (define stmt4 (prepare db "select rowid, key, val from cache where rowid = ?;"))
 (fetch (bind (reset stmt4) 1 2))

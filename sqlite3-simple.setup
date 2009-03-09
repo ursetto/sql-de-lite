@@ -1,7 +1,7 @@
 
 (compile -s -O2 -d2 -X easyffi sqlite3-simple.scm -j sqlite3-simple -L$HOME/local/lib -lsqlite3)
 (compile -host -s -O2 -d0 sqlite3-simple.import.scm)
-#(install-extension
-# 'hostinfo 
-# '("hostinfo.so" "hostinfo.import.so")
-# '((version 1.4)))
+(install-extension
+ 'sqlite3-simple 
+ '("sqlite3-simple.so" "sqlite3-simple.import.so")
+ '((version 0.1)))
