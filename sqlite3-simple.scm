@@ -18,7 +18,7 @@
    raise-database-error
    finalize step
    column-count column-name column-type column-data
-   bind-parameter-count
+   bind bind-parameters bind-parameter-count
    row-data row-alist
    reset   ; core binding!
 
@@ -27,7 +27,8 @@
                 
                 )
 
-  (import scheme chicken)
+  (import scheme
+          (except chicken reset))
   (import (only extras fprintf sprintf))
   (import (only lolevel pointer->address move-memory!))
   (import foreign foreigners easyffi)
@@ -78,6 +79,13 @@
     ((row status/row)             SQLITE_ROW)
     ((done status/done)           SQLITE_DONE))
 
+  (define-foreign-type sqlite3:destructor-type
+    (function "void" (c-pointer "void")))
+  (define-foreign-variable destructor-type/transient
+    sqlite3:destructor-type "SQLITE_TRANSIENT")
+  (define-foreign-variable destructor-type/static
+    sqlite3:destructor-type "SQLITE_STATIC")
+  
   (define raise-errors (make-parameter #f))
   
   (define (exec-sql db sql . params)
@@ -186,9 +194,10 @@
       (cond ((= rv status/ok) #t)
             (else (database-error (sqlite-statement-db stmt) 'finalize)))))
 
+  ;; returns: statement
   (define (reset stmt)   ; duplicates core binding
     (let ((rv (sqlite3_reset (nonnull-sqlite-statement-ptr stmt))))
-      (cond ((= rv status/ok) #t)
+      (cond ((= rv status/ok) stmt)
             (else (database-error (sqlite-statement-db stmt) 'reset)))))
 
   (define (execute stmt . params)
@@ -199,11 +208,36 @@
          ))
 
   (define (bind-parameters stmt . params)
+    ;; SQLITE_RANGE returned on range error; should we check against
+    ;; our own bind-parameter-count first, and if so, should it be
+    ;; a database error?  This is similar to calling Scheme proc
+    ;; with wrong arity, so perhaps it should error out.
+
+    (void))
+
+  (define (bind-named-parameters stmt . kvs)
     (void))
 
   ;; 
-  (define (bind stmt index param)
-    (void))
+  (define (bind stmt i x)
+    (when (or (< i 1)
+              (> i (bind-parameter-count stmt)))
+      ;; Should this throw an error?
+      (error 'bind "index out of range" i))
+    (let ((ptr (nonnull-sqlite-statement-ptr stmt)))
+      (let ((rv 
+             (cond ((string? x)
+                    (sqlite3_bind_text ptr i x (string-length x)
+                                       destructor-type/transient))
+                   ((exact? x) status/misuse)
+                   ((number? x) status/misuse)
+                   ((blob? x) status/misuse)
+                   ((null? x) status/misuse)
+                   ;;        ((boolean? value))
+                   )))
+        (cond ((= rv status/ok) stmt)
+              (else (database-error (sqlite-statement-db stmt) 'bind))))))
+  
   (define bind-parameter-count sqlite-statement-parameter-count)
 
   (define column-count sqlite-statement-column-count)
@@ -336,6 +370,10 @@
 (column-data stmt2 2) ; => "orangutan"
 (row-data stmt2)
 (row-alist stmt2)
+(define stmt3 (prepare db "select rowid, key, val from cache where key = ?;"))
+(fetch (bind (reset stmt3) 1 "orangutan"))
+(fetch stmt3)
+
 
 ;; note: test insertion of a blob into a text field, with an embedded null;
 ;; then see if you can read the whole thing out with sqlite3_column_text
