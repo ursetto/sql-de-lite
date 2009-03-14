@@ -26,9 +26,13 @@ sqlite3_stmt *sqlite3_next_stmt(sqlite3 *pDb, sqlite3_stmt *pStmt);
 int sqlite3_step(sqlite3_stmt *);
 int sqlite3_reset(sqlite3_stmt *pStmt);
 int sqlite3_finalize(sqlite3_stmt *pStmt);
+int sqlite3_changes(sqlite3*);
+int sqlite3_total_changes(sqlite3*);
+/* Max safe row on 32-bit is 2^53-1 (9007199254740992), on 64-bit is 2^62-1 */
+int64_t sqlite3_last_insert_rowid(sqlite3*);
 const char *sqlite3_sql(sqlite3_stmt *pStmt);
 
-/* binding */
+/* Binding */
 int sqlite3_bind_parameter_count(sqlite3_stmt*);
 int sqlite3_bind_parameter_index(sqlite3_stmt*, const char *zName);
 const char *sqlite3_bind_parameter_name(sqlite3_stmt*, int);
@@ -47,7 +51,8 @@ const void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
 int sqlite3_column_bytes(sqlite3_stmt*, int iCol);
 double sqlite3_column_double(sqlite3_stmt*, int iCol);
 int sqlite3_column_int(sqlite3_stmt*, int iCol);
-/* sqlite3_int64 sqlite3_column_int64(sqlite3_stmt*, int iCol); */
+/* Only returns 53 (or 62) significant bits, plus sign bit */
+int64_t sqlite3_column_int64(sqlite3_stmt*, int iCol);
 const /*unsigned*/ char *sqlite3_column_text(sqlite3_stmt*, int iCol);
 int sqlite3_column_type(sqlite3_stmt*, int iCol);
 const char *sqlite3_column_name(sqlite3_stmt*, int N);

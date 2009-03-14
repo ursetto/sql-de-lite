@@ -13,15 +13,17 @@
    ;; API
    error-code error-message
    open-database close-database
-   prepare fetch fetch-alist
+   prepare execute fetch fetch-alist
    raise-database-errors
    raise-database-error
-   finalize step
+   finalize step  ; step-through
    column-count column-name column-type column-data
    bind bind-parameters bind-parameter-count
    row-data row-alist
    reset   ; core binding!
    call-with-database
+   call-with-prepared-statement call-with-prepared-statements
+   change-count total-change-count last-insert-rowid
 
    ;; debugging
    int->status status->int             
@@ -89,7 +91,7 @@
   
   (define raise-database-errors (make-parameter #f))
   
-  (define (exec-sql db sql . params)
+  (define (execute-sql db sql . params)
     (if (null? params)
         (int->status (sqlite3_exec (sqlite-database-ptr db) sql #f #f #f))
         (begin
@@ -114,12 +116,22 @@
   ;; execute! has nothing to do except for resetting the statement and
   ;; binding any parameters.
   ;; it would mean execute! is equivalent to sqlite3:bind-parameters!.
-  ;; 
-  (define (exec-statement stmt . params)
-    (void)
+  ;; We could allow execute to be called with any # of params -- so
+  ;; we can e.g. call it after binding parameters individually.  In this
+  ;; case, its only function would be to reset.  So it seems a little
+  ;; silly...
 
-    )
-
+  (define (execute stmt . params)
+    (and (reset stmt)
+         (apply bind-some-parameters stmt 1 params)
+         (if (> (column-count) 0)
+             stmt  ; hmmm
+             (and (step-through stmt)
+                  (change-count stmt)))
+         ;; if returned columns = 0, step until done and return # changes
+         ;; otherwise, done (nb. cannot return 0 if step has not yet occurred!!)
+         ))
+  
   ;; returns #f on failure, '() on done, '(col1 col2 ...) on success
   ;; note: "SQL statement" is uncompiled text;
   ;; "prepared statement" is prepared compiled statement.
@@ -196,6 +208,13 @@
             (else
              (database-error (sqlite-statement-db stmt) 'step)))))
 
+  (define (step-through stmt)
+    (let loop ()
+      (case (step stmt)
+        ((row)  (loop))
+        ((done) 'done)  ; stmt?
+        (else #f))))
+
   (define (finalize stmt)
     (let ((rv (sqlite3_finalize (nonnull-sqlite-statement-ptr stmt))))
       (cond ((= rv status/ok) #t)
@@ -207,20 +226,21 @@
       (cond ((= rv status/ok) stmt)
             (else (database-error (sqlite-statement-db stmt) 'reset)))))
 
-  (define (execute stmt . params)
-    (and (reset stmt)
-         ;; (apply bind-parameters stmt params)
-         ;; if returned columns = 0, step until done and return # changes
-         ;; otherwise, done
-         ))
-
   (define (bind-parameters stmt . params)
+    (let ((count (bind-parameter-count stmt)))
     ;; SQLITE_RANGE returned on range error; should we check against
     ;; our own bind-parameter-count first, and if so, should it be
     ;; a database error?  This is similar to calling Scheme proc
     ;; with wrong arity, so perhaps it should error out.
-
-    (void))
+      (unless (= (length params) count)
+        (error 'bind-parameters "wrong number of parameters, expected" count))
+      (apply bind-some-parameters stmt 1 params)))
+  (define (bind-some-parameters stmt offset . params)
+    (let loop ((i offset) (p params))
+      (cond ((null? p) stmt)
+            ((bind stmt (car p) i)
+             (loop (+ i 1) (cdr p)))
+            (else #f))))
 
   (define (bind-named-parameters stmt . kvs)
     (void))
@@ -254,6 +274,12 @@
   
   (define bind-parameter-count sqlite-statement-parameter-count)
 
+  (define (change-count db)
+    (sqlite3_changes (nonnull-sqlite-database-ptr db)))
+  (define (total-change-count db)
+    (sqlite3_total_changes (nonnull-sqlite-database-ptr db)))
+  (define (last-insert-rowid db)
+    (sqlite3_last_insert_rowid (nonnull-sqlite-database-ptr db)))
   (define column-count sqlite-statement-column-count)
   (define (column-name stmt i)
     (let ((v (sqlite-statement-column-names stmt)))
@@ -269,7 +295,8 @@
   (define (column-data stmt i)
     (let ((stmt-ptr (nonnull-sqlite-statement-ptr stmt)))
       (case (column-type stmt i)
-        ((integer) (sqlite3_column_int stmt-ptr i))
+        ;; INTEGER type may reach 64 bits; return at least 53 significant.
+        ((integer) (sqlite3_column_int64 stmt-ptr i))
         ((float)   (sqlite3_column_double stmt-ptr i))
         ((text)    (sqlite3_column_text stmt-ptr i)) ; WARNING: NULs allowed??
         ((blob)    (let ((b (make-blob (sqlite3_column_bytes stmt-ptr i)))
@@ -324,7 +351,7 @@
     (sqlite3_errmsg (nonnull-sqlite-database-ptr db)))
 
   (define (database-error db where . args)
-    (and (raise-errors)
+    (and (raise-database-errors)
          (apply raise-database-error db where args)))
   (define (raise-database-error db where . args)
     (apply error where (error-message db) args))
@@ -386,7 +413,7 @@
 )
 
 (use sqlite3-simple)
-(raise-errors #t)
+(raise-database-errors #t)
 (define db (open-database "a.db"))
 (define stmt2 (prepare db "select rowid, key, val from cache;"))
 (step stmt2)
@@ -415,6 +442,19 @@
 (call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, value from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))   ; #f (or error) -- invalid column name
 (call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, val from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))     ; (("ostrich" "bird") (1 "ostrich" "bird"))
 
+;; test large numbers; note 2^53=9007199254740992   -2^53 ~ 2^53-1 
+(step (prepare db "insert into cache(rowid,key,val) values(1234567890125, 'jimmy', 'dunno');")) ;=>1
+(last-insert-rowid db) => 1234567890125.0
+(fetch (bind (prepare db "select rowid, * from cache where rowid = ?;") 1 1234567890125.0))  ; => (1234567890125.0 "jimmy" "dunno")
+   ;; correct line, but int64 return is compromised by "INTEGER" type.
+
+(step (prepare db "insert into cache(rowid,key,val) values(4294967295, 'moby', 'whale');"))
+(fetch (bind (prepare db "select rowid, * from cache where rowid = ?;") 1 4294967295))  ; (-1 "moby" "whale")
+   ;; correct line, rowid not correct either.
+   ;; "integer" type assumes input is signed.
+   ;; return type should be 'number', and column type should be ... double,
+   ;;   I guess; limited to 2^53-1 then, even on 64-bit, but we can't safely
+   ;; know when to use column_int64 (??)
 
 ;; note: test insertion of a blob into a text field, with an embedded null;
 ;; then see if you can read the whole thing out with sqlite3_column_text
