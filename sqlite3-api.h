@@ -31,6 +31,7 @@ int sqlite3_total_changes(sqlite3*);
 /* Max safe row on 32-bit is 2^53-1 (9007199254740992), on 64-bit is 2^62-1 */
 int64_t sqlite3_last_insert_rowid(sqlite3*);
 const char *sqlite3_sql(sqlite3_stmt *pStmt);
+bool sqlite3_get_autocommit(sqlite3*);
 
 /* Binding */
 int sqlite3_bind_parameter_count(sqlite3_stmt*);

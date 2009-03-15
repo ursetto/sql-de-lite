@@ -13,17 +13,23 @@
    ;; API
    error-code error-message
    open-database close-database
-   prepare execute fetch fetch-alist
+   prepare
+   execute execute-sql
+   fetch fetch-alist
    raise-database-errors
    raise-database-error
    finalize step  ; step-through
    column-count column-name column-type column-data
    bind bind-parameters bind-parameter-count
+   library-version ; string, not proc
    row-data row-alist
    reset   ; core binding!
    call-with-database
    call-with-prepared-statement call-with-prepared-statements
    change-count total-change-count last-insert-rowid
+   with-transaction with-deferred-transaction
+   with-immediate-transaction with-exclusive-transaction
+   autocommit?
 
    ;; debugging
    int->status status->int             
@@ -34,6 +40,7 @@
           (except chicken reset))
   (import (only extras fprintf sprintf))
   (import (only lolevel pointer->address move-memory!))
+  (import (only data-structures alist-ref))
   (import foreign foreigners easyffi)
 
 #>? #include "sqlite3-api.h" <#
@@ -88,47 +95,30 @@
     sqlite3:destructor-type "SQLITE_TRANSIENT")
   (define-foreign-variable destructor-type/static
     sqlite3:destructor-type "SQLITE_STATIC")
+  (define library-version (foreign-value "sqlite3_version" c-string))
   
   (define raise-database-errors (make-parameter #f))
-  
-  (define (execute-sql db sql . params)
-    (if (null? params)
-        (int->status (sqlite3_exec (sqlite-database-ptr db) sql #f #f #f))
-        (begin
-          (error)
-          
-         
-         )
-        
-        )
-    )
 
-  ;; name doesn't seem right.  also, may now be same as execute!.  but
-  ;; execute! can't actually step the statement.  check DBD::SQLite:
+  (define (execute-sql db sql . params)
+    (and-let* ((s (prepare db sql)))
+      (apply execute s params)))
+
+  ;; DBD::SQLite:
   ;; execute steps entire statement when column count is zero,
   ;; returning number of changes.  If columns != 0, it does a step! to
   ;; prepare for fetch (but returns 0 whether data is available or
   ;; not); fetch calls step! after execution.  note that this will run
-  ;; an extra step when you don't need it; although you probably normally
-  ;; want to step through all results.
-
-  ;; we could have fetch call step! itself prior to fetching; this means
-  ;; execute! has nothing to do except for resetting the statement and
-  ;; binding any parameters.
-  ;; it would mean execute! is equivalent to sqlite3:bind-parameters!.
-  ;; We could allow execute to be called with any # of params -- so
-  ;; we can e.g. call it after binding parameters individually.  In this
-  ;; case, its only function would be to reset.  So it seems a little
-  ;; silly...
+  ;; an extra step when you don't need it
 
   (define (execute stmt . params)
     (and (reset stmt)
          (apply bind-some-parameters stmt 1 params)
-         (if (> (column-count) 0)
+         (if (> (column-count stmt) 0)
              stmt  ; hmmm
              (and (step-through stmt)
-                  (change-count stmt)))
-         ;; if returned columns = 0, step until done and return # changes
+                  (finalize stmt)
+                  (change-count (sqlite-statement-db stmt))))
+         ;; if returned columns = 0, step through, finalize and return # changes
          ;; otherwise, done (nb. cannot return 0 if step has not yet occurred!!)
          ))
   
@@ -235,10 +225,11 @@
       (unless (= (length params) count)
         (error 'bind-parameters "wrong number of parameters, expected" count))
       (apply bind-some-parameters stmt 1 params)))
+
   (define (bind-some-parameters stmt offset . params)
     (let loop ((i offset) (p params))
       (cond ((null? p) stmt)
-            ((bind stmt (car p) i)
+            ((bind stmt i (car p))
              (loop (+ i 1) (cdr p)))
             (else #f))))
 
@@ -369,7 +360,7 @@
              #t)
             (else #f))))
 
-  (define-syntax begin0
+  (define-syntax begin0   ; multiple values discarded
     (syntax-rules () ((_ e0 e1 ...)
                       (let ((tmp e0)) e1 ... tmp))))
   (define (call-with-prepared-statement db sql proc)
@@ -391,15 +382,38 @@
         (begin0 (proc db)
           (close-database db)))))
 
+  ;; Escaping or re-entering the dynamic extent of THUNK will not
+  ;; affect the in-progress transaction.  However, if an exception
+  ;; occurs, or THUNK returns #f, the transaction will be rolled back.
+  (define with-transaction
+    (let ((tsqls '((deferred . "begin deferred;")
+                   (immediate . "begin immediate;")
+                   (exclusive . "begin exclusive;"))))
+     (lambda (db thunk #!optional (type 'deferred))
+       (and (execute-sql db (or (alist-ref type tsqls)
+                                (error 'with-transaction
+                                       "invalid transaction type" type)))
+            (handle-exceptions ex (begin (execute-sql db "rollback;")
+                                         (signal ex))
+              (let ((rv (thunk)))  ; only 1 return value allowed
+                (if rv
+                    (execute-sql db "commit;")
+                    (execute-sql db "rollback;"))
+                rv))))))
+  (define with-deferred-transaction with-transaction)  ; convenience fxns
+  (define (with-immediate-transaction db thunk)
+    (with-transaction db thunk 'immediate))
+  (define (with-exclusive-transaction db thunk)
+    (with-transaction db thunk 'exclusive))
+
+  (define (autocommit? db)
+    (sqlite3_get_autocommit (nonnull-sqlite-database-ptr db)))
+
   ;; (I think (void) and '() should both be treated as NULL)
   ;; careful of return value conflict with '() meaning SQLITE_DONE though
 ;;   (define void?
 ;;     (let ((v (void)))
 ;;       (lambda (x) (eq? v x))))
-
-  
-
-
   )
 
 #|
@@ -446,15 +460,8 @@
 (step (prepare db "insert into cache(rowid,key,val) values(1234567890125, 'jimmy', 'dunno');")) ;=>1
 (last-insert-rowid db) => 1234567890125.0
 (fetch (bind (prepare db "select rowid, * from cache where rowid = ?;") 1 1234567890125.0))  ; => (1234567890125.0 "jimmy" "dunno")
-   ;; correct line, but int64 return is compromised by "INTEGER" type.
-
-(step (prepare db "insert into cache(rowid,key,val) values(4294967295, 'moby', 'whale');"))
-(fetch (bind (prepare db "select rowid, * from cache where rowid = ?;") 1 4294967295))  ; (-1 "moby" "whale")
-   ;; correct line, rowid not correct either.
-   ;; "integer" type assumes input is signed.
-   ;; return type should be 'number', and column type should be ... double,
-   ;;   I guess; limited to 2^53-1 then, even on 64-bit, but we can't safely
-   ;; know when to use column_int64 (??)
+(execute-sql db "insert into cache(rowid,key,val) values(4294967295, 'moby', 'whale');")
+(fetch (execute-sql db "select rowid, * from cache where rowid = ?;" 4294967295))  ; => (4294967295.0 "moby" "whale")
 
 ;; note: test insertion of a blob into a text field, with an embedded null;
 ;; then see if you can read the whole thing out with sqlite3_column_text
