@@ -454,15 +454,18 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Rollback current transaction.  Reset pending statements before
   ;; doing so; rollback will fail if queries are running.  Resetting
   ;; only open queries would be nicer, but we don't track them (yet).
+  ;; Rolling back when no transaction is active returns #t.
   (define (rollback db)
-    (let ((db-ptr (nonnull-sqlite-database-ptr db)))
-      (do ((stmt (sqlite3_next_stmt db-ptr #f)
-                 (sqlite3_next_stmt db-ptr stmt)))
-          ((not stmt))
-        (warning (sprintf "resetting pending statement: ~S"
-                          (sqlite3_sql stmt)))
-        (sqlite3_reset stmt))
-      (execute-sql db "rollback;")))
+    (if (autocommit? db)
+        #t
+        (let ((db-ptr (nonnull-sqlite-database-ptr db)))
+          (do ((stmt (sqlite3_next_stmt db-ptr #f)
+                     (sqlite3_next_stmt db-ptr stmt)))
+              ((not stmt))
+            (warning (sprintf "resetting pending statement: ~S"
+                              (sqlite3_sql stmt)))
+            (sqlite3_reset stmt))
+          (execute-sql db "rollback;"))))
 
 ;;; Busy handling
 
@@ -611,6 +614,10 @@ int busy_notification_handler(void *ctx, int times) {
      (execute-sql db "create table cache(k,v);")
      (let-prepare db ((s "insert into cache values('jml', 'oak');"))
                   (execute s))))  ; => 1
+
+
+(call-with-database ":memory:" (lambda (db) (rollback db))) ;=> #t (Test rollback outside transaction succeeds)
+;; (call-with-database ":memory:" (lambda (db) (commit db))) ;=> #t
 
 |#
 
