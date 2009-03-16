@@ -36,9 +36,13 @@ int busy_notification_handler(void *ctx, int times) {
    with-transaction with-deferred-transaction
    with-immediate-transaction with-exclusive-transaction
    autocommit?
+   rollback
 
    set-busy-timeout! set-busy-handler! busy-timeout-handler 
    retry-busy? reset-busy! ; internal
+
+   ;; syntax
+   let-prepare
 
    ;; debugging
    int->status status->int             
@@ -170,8 +174,10 @@ int busy_notification_handler(void *ctx, int times) {
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
   (define-inline (nonnull-sqlite-statement-ptr stmt)
-    (or (sqlite-statement-ptr stmt)
-        (error 'sqlite3-simple "operation on finalized statement")))  
+    ;; All references to statement ptr implicitly check for valid db.
+    (or (and (nonnull-sqlite-database-ptr (sqlite-statement-db stmt))
+             (sqlite-statement-ptr stmt))
+        (error 'sqlite3-simple "operation on finalized statement")))
   (define-record-printer (sqlite-database db port)
     (fprintf port "#<sqlite-database ~A on ~S>"
              (or (sqlite-database-ptr db)
@@ -226,10 +232,16 @@ int busy_notification_handler(void *ctx, int times) {
 
   ;; Can finalize return BUSY?  If so, we may have erred in assuming
   ;; we don't have to finalize immediately.
+  ;; Finalizing a finalized statement is a no-op.
   (define (finalize stmt)
-    (let ((rv (sqlite3_finalize (nonnull-sqlite-statement-ptr stmt))))
-      (cond ((= rv status/ok) #t)
-            (else (database-error (sqlite-statement-db stmt) 'finalize)))))
+    (or (not (sqlite-statement-ptr stmt))
+        (let ((rv (sqlite3_finalize
+                   (nonnull-sqlite-statement-ptr stmt)))) ; checks db here
+          (cond ((= rv status/ok)
+                 (sqlite-statement-ptr-set! stmt #f)
+                 #t)
+                (else (database-error
+                       (sqlite-statement-db stmt) 'finalize))))))
 
   ;; returns: statement
   (define (reset stmt)   ; duplicates core binding
@@ -407,6 +419,7 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Escaping or re-entering the dynamic extent of THUNK will not
   ;; affect the in-progress transaction.  However, if an exception
   ;; occurs, or THUNK returns #f, the transaction will be rolled back.
+  ;; A rollback failure is a critical error and you should likely abort.
   (define with-transaction
     (let ((tsqls '((deferred . "begin deferred;")
                    (immediate . "begin immediate;")
@@ -415,13 +428,20 @@ int busy_notification_handler(void *ctx, int times) {
        (and (execute-sql db (or (alist-ref type tsqls)
                                 (error 'with-transaction
                                        "invalid transaction type" type)))
-            (handle-exceptions ex (begin (execute-sql db "rollback;")
-                                         (signal ex))
-              (let ((rv (thunk)))  ; only 1 return value allowed
-                (if rv
-                    (execute-sql db "commit;")  ; FIXME MAY FAIL WITH BUSY
-                    (execute-sql db "rollback;"))
-                rv))))))
+            (let ((rv 
+                   (handle-exceptions ex (begin (or (rollback db)
+                                                    (error 'with-transaction
+                                                           "rollback failed"))
+                                                (signal ex))
+                     (let ((rv (thunk))) ; only 1 return value allowed
+                       (and rv
+                            (execute-sql db "commit;")  ; MAY FAIL WITH BUSY
+                            rv)))))
+              (or rv
+                  (if (rollback db)
+                      #f
+                      (error 'with-transaction "rollback failed"))))))))
+  
   (define with-deferred-transaction with-transaction)  ; convenience fxns
   (define (with-immediate-transaction db thunk)
     (with-transaction db thunk 'immediate))
@@ -430,6 +450,19 @@ int busy_notification_handler(void *ctx, int times) {
 
   (define (autocommit? db)
     (sqlite3_get_autocommit (nonnull-sqlite-database-ptr db)))
+
+  ;; Rollback current transaction.  Reset pending statements before
+  ;; doing so; rollback will fail if queries are running.  Resetting
+  ;; only open queries would be nicer, but we don't track them (yet).
+  (define (rollback db)
+    (let ((db-ptr (nonnull-sqlite-database-ptr db)))
+      (do ((stmt (sqlite3_next_stmt db-ptr #f)
+                 (sqlite3_next_stmt db-ptr stmt)))
+          ((not stmt))
+        (warning (sprintf "resetting pending statement: ~S"
+                          (sqlite3_sql stmt)))
+        (sqlite3_reset stmt))
+      (execute-sql db "rollback;")))
 
 ;;; Busy handling
 
@@ -488,6 +521,17 @@ int busy_notification_handler(void *ctx, int times) {
                   (else
                    (thread-sleep!/ms delay)
                    #t)))))))
+
+  (define-syntax let-prepare
+    (syntax-rules ()
+      ((let-prepare db ((v sql))
+                    e0 e1 ...)
+       (call-with-prepared-statement db sql
+                                     (lambda (v) e0 e1 ...)))
+      ((let-prepare db ((v0 sql0) ...)
+                    e0 e1 ...)
+       (call-with-prepared-statements db (list sql0 ...)
+                                      (lambda (v0 ...) e0 e1 ...)))))
   
   ;; (I think (void) and '() should both be treated as NULL)
   ;; careful of return value conflict with '() meaning SQLITE_DONE though
@@ -543,10 +587,33 @@ int busy_notification_handler(void *ctx, int times) {
 (execute-sql db "insert into cache(rowid,key,val) values(4294967295, 'moby', 'whale');")
 (fetch (execute-sql db "select rowid, * from cache where rowid = ?;" 4294967295))  ; => (4294967295.0 "moby" "whale")
 
-;; note: test insertion of a blob into a text field, with an embedded null;
-;; then see if you can read the whole thing out with sqlite3_column_text
-;; or if it is terminated at first embedded null.
+
+(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) #f))))  ; => #f, plus statement will be reset by rollback and finalized by call/db
+(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) (error 'oops))))) ; => same as above but error is thrown
+(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)) (error 'oops))) #f))))   ; => error, same as previous
+(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)))) #f))))   ; => #f, statement finalized by call-with-prepared-statement
+
+(call-with-database ":memory:"
+   (lambda (db)
+     (let-prepare db ((s1 "select 1 union select 2")
+                      (s2 "select 3 union select 4"))
+        (list (fetch (execute s1)) (fetch (execute s2)))))) ;=> ((1) (3))
+
+(call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (execute-sql db "insert into cache values('jml', 'oak');")))  ; yet this works
+
+
+(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) s))))) (execute s))  ;=> Error: (sqlite3-simple) operation on finalized statement
+
+(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (prepare db "insert into cache values('jml', 'oak');"))))) (execute s))   ;=> Error: operation on closed database
+
+(call-with-database ":memory:"
+   (lambda (db)
+     (execute-sql db "create table cache(k,v);")
+     (let-prepare db ((s "insert into cache values('jml', 'oak');"))
+                  (execute s))))  ; => 1
+
 |#
+
 
 ;;; Notes
 
