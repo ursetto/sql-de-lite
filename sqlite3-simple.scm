@@ -1,4 +1,5 @@
 ;; (critical) BUSY return from COMMIT not handled
+;; pysqlite bench at http://oss.itsystementwicklung.de/trac/pysqlite/wiki/PysqliteTwoBenchmarks
 
 #>  #include <sqlite3.h> <#
 #>
@@ -52,6 +53,7 @@ int busy_notification_handler(void *ctx, int times) {
   (import scheme
           (except chicken reset))
   (import (only extras fprintf sprintf))
+  (require-library lolevel)
   (import (only lolevel object->pointer object-release object-evict))
   (import (only data-structures alist-ref))
   (import (only srfi-18 thread-sleep! milliseconds->time))
