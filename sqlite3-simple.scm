@@ -36,7 +36,7 @@ int busy_notification_handler(void *ctx, int times) {
    with-transaction with-deferred-transaction
    with-immediate-transaction with-exclusive-transaction
    autocommit?
-   rollback
+   rollback commit
 
    set-busy-timeout! set-busy-handler! busy-timeout-handler 
    retry-busy? reset-busy! ; internal
@@ -456,16 +456,26 @@ int busy_notification_handler(void *ctx, int times) {
   ;; only open queries would be nicer, but we don't track them (yet).
   ;; Rolling back when no transaction is active returns #t.
   (define (rollback db)
-    (if (autocommit? db)
-        #t
-        (let ((db-ptr (nonnull-sqlite-database-ptr db)))
-          (do ((stmt (sqlite3_next_stmt db-ptr #f)
-                     (sqlite3_next_stmt db-ptr stmt)))
-              ((not stmt))
-            (warning (sprintf "resetting pending statement: ~S"
-                              (sqlite3_sql stmt)))
-            (sqlite3_reset stmt))
-          (execute-sql db "rollback;"))))
+    (cond ((autocommit? db) #t)
+          (else
+           (reset-running-queries! db)
+           (execute-sql db "rollback;"))))
+  ;; Same behavior as rollback.
+  (define (commit db)
+    (cond ((autocommit? db) #t)
+          (else
+           (reset-running-queries! db)
+           (execute-sql db "commit;"))))
+  (define (reset-running-queries! db)
+    (let ((db-ptr (nonnull-sqlite-database-ptr db)))
+      (do ((stmt (sqlite3_next_stmt db-ptr #f)
+                 (sqlite3_next_stmt db-ptr stmt)))
+          ((not stmt))
+        (warning (sprintf "resetting pending statement: ~S"
+                          (sqlite3_sql stmt)))
+        (sqlite3_reset stmt))))
+  
+
 
 ;;; Busy handling
 
@@ -602,10 +612,14 @@ int busy_notification_handler(void *ctx, int times) {
                       (s2 "select 3 union select 4"))
         (list (fetch (execute s1)) (fetch (execute s2)))))) ;=> ((1) (3))
 
-(call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (execute-sql db "insert into cache values('jml', 'oak');")))  ; yet this works
+(call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (execute-sql db "insert into cache values('jml', 'oak');"))) ;=> 1
 
 
-(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) s))))) (execute s))  ;=> Error: (sqlite3-simple) operation on finalized statement
+(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) s))))) (execute s))  ;=> Error: operation on closed database
+
+(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) s))))) (execute s))  ;=> Error: operation on closed database
+
+(call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) (finalize s) (execute s)))) ;=> Error: operation on finalized statement
 
 (let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (prepare db "insert into cache values('jml', 'oak');"))))) (execute s))   ;=> Error: operation on closed database
 
@@ -617,7 +631,7 @@ int busy_notification_handler(void *ctx, int times) {
 
 
 (call-with-database ":memory:" (lambda (db) (rollback db))) ;=> #t (Test rollback outside transaction succeeds)
-;; (call-with-database ":memory:" (lambda (db) (commit db))) ;=> #t
+(call-with-database ":memory:" (lambda (db) (commit db))) ;=> #t
 
 |#
 
