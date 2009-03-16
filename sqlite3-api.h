@@ -58,4 +58,8 @@ const /*unsigned*/ char *sqlite3_column_text(sqlite3_stmt*, int iCol);
 int sqlite3_column_type(sqlite3_stmt*, int iCol);
 const char *sqlite3_column_name(sqlite3_stmt*, int N);
 
+/* busy handlers */
+int sqlite3_busy_handler(sqlite3*, int(*)(void*,int), void*);
+int sqlite3_busy_timeout(sqlite3*, int ms);
+
 

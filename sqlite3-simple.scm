@@ -1,6 +1,12 @@
-;; missing: (type-name native-type scheme-value)
+;; (critical) BUSY return from COMMIT not handled
 
 #>  #include <sqlite3.h> <#
+#>
+int busy_notification_handler(void *ctx, int times) {
+   *(C_word*)(C_data_pointer(ctx)) = C_SCHEME_TRUE;
+   return 0;
+}                                                     
+<#
 
 (module sqlite3-simple
   (
@@ -31,6 +37,9 @@
    with-immediate-transaction with-exclusive-transaction
    autocommit?
 
+   set-busy-timeout! set-busy-handler! busy-timeout-handler 
+   retry-busy? reset-busy! ; internal
+
    ;; debugging
    int->status status->int             
                 
@@ -39,8 +48,9 @@
   (import scheme
           (except chicken reset))
   (import (only extras fprintf sprintf))
-  (import (only lolevel pointer->address move-memory!))
+  (import (only lolevel object->pointer object-release object-evict))
   (import (only data-structures alist-ref))
+  (import (only srfi-18 thread-sleep! milliseconds->time))
   (import foreign foreigners easyffi)
 
 #>? #include "sqlite3-api.h" <#
@@ -155,7 +165,7 @@
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
              (sqlite-statement-sql s)))
-  (define-record sqlite-database ptr filename)
+  (define-record sqlite-database ptr filename invoked-busy-handler?)
   (define-inline (nonnull-sqlite-database-ptr db)
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
@@ -169,23 +179,32 @@
              (sqlite-database-filename db)))
   ;; May return #f even on SQLITE_OK, which means the statement contained
   ;; only whitespace and comments and nothing was compiled.
+  ;; BUSY may occur here.
   (define (prepare db sql)
     (let-location ((stmt (c-pointer "sqlite3_stmt")))
-      (let ((rv (sqlite3_prepare_v2 (nonnull-sqlite-database-ptr db)
-                                    sql
-                                    (string-length sql)
-                                    (location stmt)
-                                    #f)))
-        (cond ((= rv status/ok)
-               (if stmt
-                   (let* ((ncol (sqlite3_column_count stmt))
-                          (nparam (sqlite3_bind_parameter_count stmt))
-                          (names (make-vector ncol #f)))
-                     (make-sqlite-statement stmt sql db ncol names nparam))
-                   #f)) ; not an error, even when raising errors
-              ;; ((= rv status/busy (retry))) 
-              (else
-               (database-error db 'prepare sql))))))
+      (let retry ((times 0))
+        (reset-busy! db)
+        (let ((rv (sqlite3_prepare_v2 (nonnull-sqlite-database-ptr db)
+                                      sql
+                                      (string-length sql)
+                                      (location stmt)
+                                      #f)))
+          (cond ((= rv status/ok)
+                 (if stmt
+                     (let* ((ncol (sqlite3_column_count stmt))
+                            (nparam (sqlite3_bind_parameter_count stmt))
+                            (names (make-vector ncol #f)))
+                       (make-sqlite-statement stmt sql db ncol names nparam))
+                     #f))     ; not an error, even when raising errors
+                ((= rv status/busy)
+                 (let ((bh (busy-handler)))
+                   (if (and bh
+                            (retry-busy? db)
+                            (bh db times))
+                       (retry (+ times 1))
+                       (database-error db 'prepare sql))))
+                (else
+                 (database-error db 'prepare sql)))))))
 
   ;; return #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE
   (define (step stmt)
@@ -205,6 +224,8 @@
         ((done) 'done)  ; stmt?
         (else #f))))
 
+  ;; Can finalize return BUSY?  If so, we may have erred in assuming
+  ;; we don't have to finalize immediately.
   (define (finalize stmt)
     (let ((rv (sqlite3_finalize (nonnull-sqlite-statement-ptr stmt))))
       (cond ((= rv status/ok) #t)
@@ -324,12 +345,12 @@
   ;; NULL (#f) filename allowed, creates private on-disk database.  
   (define (open-database filename)
     (let-location ((db-ptr (c-pointer "sqlite3")))
-      (let* ((rv (sqlite3_open filename (location db-ptr)))
-             (db (make-sqlite-database db-ptr filename)))
+      (let* ((rv (sqlite3_open filename (location db-ptr))))
         (if (eqv? rv status/ok)
-            db
+            (make-sqlite-database db-ptr filename (object-evict (vector #f)))
             (if db-ptr
-                (database-error db 'open-database filename)
+                (database-error (make-sqlite-database db-ptr filename #f)
+                                'open-database filename)
                 (error 'open-database "internal error: out of memory"))))))
 
   ;; database-error-code?
@@ -357,6 +378,7 @@
         (sqlite3_finalize stmt))
       (cond ((eqv? status/ok (sqlite3_close db-ptr))
              (sqlite-database-ptr-set! db #f)
+             (object-release (sqlite-database-invoked-busy-handler? db))
              #t)
             (else #f))))
 
@@ -397,7 +419,7 @@
                                          (signal ex))
               (let ((rv (thunk)))  ; only 1 return value allowed
                 (if rv
-                    (execute-sql db "commit;")
+                    (execute-sql db "commit;")  ; FIXME MAY FAIL WITH BUSY
                     (execute-sql db "rollback;"))
                 rv))))))
   (define with-deferred-transaction with-transaction)  ; convenience fxns
@@ -409,6 +431,64 @@
   (define (autocommit? db)
     (sqlite3_get_autocommit (nonnull-sqlite-database-ptr db)))
 
+;;; Busy handling
+
+  ;; Busy handling is done entirely in the application, as with SRFI-18
+  ;; threads it is not legal to yield within a callback.  The backoff
+  ;; algorithm of sqlite3_busy_timeout is reimplemented.
+
+  ;; SQLite can deadlock in certain situations and to avoid this will
+  ;; return SQLITE_BUSY immediately rather than invoking the busy handler.
+  ;; However if there is no busy handler, we cannot tell a retryable
+  ;; SQLITE_BUSY from a deadlock one.  To gain deadlock protection we
+  ;; register a simple busy handler which sets a flag indicating this
+  ;; BUSY is retryable.  This handler writes the flag into an evicted
+  ;; object in static memory so it need not call back into Scheme nor
+  ;; require safe-lambda for all calls into SQLite (a performance killer!)
+  
+  (define (retry-busy? db)
+    (vector-ref (sqlite-database-invoked-busy-handler? db) 0))
+  (define (reset-busy! db)
+    (vector-set! (sqlite-database-invoked-busy-handler? db) 0 #f))
+  (define busy-handler (make-parameter #f))
+  (define (set-busy-handler! db proc)
+    (busy-handler proc)
+    (if proc
+        (sqlite3_busy_handler (nonnull-sqlite-database-ptr db)
+                              (foreign-value "busy_notification_handler"
+                                             c-pointer)
+                              (object->pointer
+                               (sqlite-database-invoked-busy-handler? db)))
+        (sqlite3_busy_handler (nonnull-sqlite-database-ptr db) #f #f))
+    (void))
+  (define busy-timeout (make-parameter 0))
+  (define (set-busy-timeout! db ms)
+    (busy-timeout ms)
+    (if (= ms 0)
+        (set-busy-handler! db #f)
+        (set-busy-handler! db busy-timeout-handler)))
+  (define (thread-sleep!/ms ms)
+    (thread-sleep!
+     (milliseconds->time (+ ms (current-milliseconds)))))
+  (define busy-timeout-handler
+    (let* ((delays '#(1 2 5 10 15 20 25 25  25  50  50 100))
+           (totals '#(0 1 3  8 18 33 53 78 103 128 178 228))
+           (ndelay (vector-length delays)))
+      (lambda (db count)
+        (let* ((timeout (busy-timeout))
+               (delay (vector-ref delays (min count (- ndelay 1))))
+               (prior (if (< count ndelay)
+                          (vector-ref totals count)
+                          (+ (vector-ref totals (- ndelay 1))
+                             (* delay (- count (- ndelay 1)))))))
+          (let ((delay (if (> (+ prior delay) timeout)
+                           (- timeout prior)
+                           delay)))
+            (cond ((<= delay 0) #f)
+                  (else
+                   (thread-sleep!/ms delay)
+                   #t)))))))
+  
   ;; (I think (void) and '() should both be treated as NULL)
   ;; careful of return value conflict with '() meaning SQLITE_DONE though
 ;;   (define void?
@@ -476,4 +556,23 @@
   ;; the statement is not a COMMIT and occurs within a explicit
   ;; transaction then you should rollback the transaction before
   ;; continuing."
+
+  ;; when two threads are writing, one attempts to grab a reserved
+  ;; lock and one attempts to promote reserved->exclusive, the busy
+  ;; handler is not invoked for one thread, returning busy
+  ;; immediately; that thread should rollback to proceed.  The exact
+  ;; wording is: "Do not invoke the busy callback when trying to
+  ;; promote a lock from SHARED to RESERVED."
+  ;; How do we simulate this behavior
+  ;; if we are doing our own busy handling (distinguish between temporary
+  ;; and permanent SQLITE_BUSY return)?  You can start all write
+  ;; transactions with BEGIN IMMEDIATE to alleviate (I think) but what
+  ;; about general case?
+
+;; busy handling: To know whether it is safe to retry on BUSY (i.e.
+;; non deadlock) we apparently must register a sqlite3 busy handler
+;; and have it set a parameter variable, whenever it is called.
+;; otherwise we cannot distinguish between BUSY retry and BUSY deadlock.
+;; but this requires a foreign-safe-lambda* which will slow down STEP
+;; drastically.
 
