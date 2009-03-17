@@ -67,7 +67,6 @@
           (close-database db)
           rv)))
 
-;; let-prepare finalization will error when database is closed
 (test "Pending open queries are finalized when DB is closed"
       '((1) (3))
       (let* ((db (open-database ":memory:"))
@@ -85,13 +84,15 @@
                          (s2 "select 3 union select 4"))
           (let ((rv (list (fetch (execute s1)) (fetch (execute s2)))))
             (close-database db)
+            (error 'hi)
             rv))))
 
 (test-error "Pending statements are finalized on error in call-with-database"
             ;; Should receive error 'oops here
             ;; FIXME should test that statements are actually finalized
             ;; rather than relying on error 'oops reception and manual
-            ;; inspection of warning
+            ;; inspection of warning.  Also verify finalization occurs in
+            ;; call-with-database, not let-prepare
       (call-with-database ":memory:"
         (lambda (db)
           (let-prepare db ((s1 "select 1 union select 2")
