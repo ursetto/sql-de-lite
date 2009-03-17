@@ -40,7 +40,7 @@
 (call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, value from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))   ; #f (or error) -- invalid column name
 (call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, val from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))     ; (("ostrich" "bird") (1 "ostrich" "bird"))
 
-(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) #f))))  ; => #f, plus statement will be reset by rollback and finalized by call/db
+
 (call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) (error 'oops))))) ; => same as above but error is thrown
 (call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)) (error 'oops))) #f))))   ; => error, same as previous
 (call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)))) #f))))   ; => #f, statement finalized by call-with-prepared-statement
@@ -49,17 +49,47 @@
 
 (raise-database-errors #t)
 
-(test "autocommit? reports #t outside transaction" #t
-      (call-with-database ":memory:"
-        (lambda (db)
-          (autocommit? db))))
+(test-group
+ "autocommit"
+ (test "autocommit? reports #t outside transaction" #t
+       (call-with-database ":memory:"
+         (lambda (db)
+           (autocommit? db))))
+ (test "autocommit? reports #f during transaction" #f
+       (call-with-database ":memory:"
+         (lambda (db)
+           (with-transaction db
+             (lambda ()
+               (autocommit? db)))))))
 
-(test "autocommit? reports #f during transaction" #f
-      (call-with-database ":memory:"
-        (lambda (db)
-          (with-transaction db
-            (lambda ()
-              (autocommit? db))))))
+(test-group
+ "rollback"
+ (test-error "Open queries prevent SQL ROLLBACK"
+       (call-with-database ":memory:"
+         (lambda (db)
+           (execute-sql db "begin;")
+           (or (equal? '(1) (fetch (execute-sql db "select 1 union select 2")))
+               (error 'fetch "fetch failed during test"))
+           (execute-sql db "rollback;"))))  ; will throw SQLITE_BUSY
+ (test "(rollback) resets open queries" 0
+       ;; We assume reset worked if no error; should we explicitly test it?
+       (call-with-database ":memory:"
+         (lambda (db)
+           (execute-sql db "begin;")
+           (or (equal? '(1) (fetch (execute-sql db "select 1 union select 2")))
+               (error 'fetch "fetch failed during test"))
+           (rollback db))))
+ (test "with-transaction rollback resets open queries" #f
+       ;; We assume reset worked if no error; should we explicitly test it?
+       (call-with-database ":memory:"
+         (lambda (db)
+           (with-transaction db
+             (lambda ()
+               (or (equal? '(1)
+                           (fetch (execute-sql db "select 1 union select 2")))
+                   (error 'fetch "fetch failed during test"))
+               #f ; rollback
+               ))))))
 
 (test "Pending open queries are finalized after let-prepare"
       '((1) (3))
