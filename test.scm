@@ -40,14 +40,6 @@
 (call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, value from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))   ; #f (or error) -- invalid column name
 (call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, val from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))     ; (("ostrich" "bird") (1 "ostrich" "bird"))
 
-;; test large numbers; note 2^53=9007199254740992   -2^53 ~ 2^53-1 
-(step (prepare db "insert into cache(rowid,key,val) values(1234567890125, 'jimmy', 'dunno');")) ;=>1
-(last-insert-rowid db) => 1234567890125.0
-(fetch (bind (prepare db "select rowid, * from cache where rowid = ?;") 1 1234567890125.0))  ; => (1234567890125.0 "jimmy" "dunno")
-(execute-sql db "insert into cache(rowid,key,val) values(4294967295, 'moby', 'whale');")
-(fetch (execute-sql db "select rowid, * from cache where rowid = ?;" 4294967295))  ; => (4294967295.0 "moby" "whale")
-
-
 (call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) #f))))  ; => #f, plus statement will be reset by rollback and finalized by call/db
 (call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) (error 'oops))))) ; => same as above but error is thrown
 (call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)) (error 'oops))) #f))))   ; => error, same as previous
@@ -77,15 +69,16 @@
           rv)))
 
 ;; let-prepare finalization will error when database is closed
-(test "Finalizing previously finalized statement succeeds after DB is closed"
+;; Should actually succeed, as ideally statements will be set to #f
+;; upon database close.
+(test "Finalizing previously finalized statement OK even after DB is closed"
       '((1) (3))
       (let ((db (open-database ":memory:")))
         (let-prepare db ((s1 "select 1 union select 2")
                          (s2 "select 3 union select 4"))
           (let ((rv (list (fetch (execute s1)) (fetch (execute s2)))))
             (close-database db)
-            (error 'hi)
-            rv))))
+            rv))))   ; s1 and s2 are refinalized after let-prepare
 
 (test-error "Pending statements are finalized on error in call-with-database"
             ;; Should receive error 'oops here
@@ -144,3 +137,21 @@
       (call-with-database ":memory:"
         (lambda (db) (commit db))))
 
+(test-group
+ "Large integers"
+ ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
+ (call-with-database ":memory:"
+   (lambda (db)
+     (let ((rowid 1234567890125))
+       (execute-sql db "create table cache(k,v);")
+       ;; Note the hardcoded insert to ensure the value is correct.
+       (execute-sql db "insert into cache(rowid,k,v) values(1234567890125, 'jimmy', 'dunno');")
+       (test (conc "last-insert-rowid on int64 " rowid) rowid
+             (last-insert-rowid db))
+       (test (conc "retrieve row containing int64 rowid " rowid)
+             `(,rowid "jimmy" "dunno")
+             (fetch (execute-sql db
+                                 "select rowid, * from cache where rowid = ?;"
+                                 rowid)))))))
+
+(test-exit)

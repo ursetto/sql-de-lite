@@ -233,10 +233,14 @@ int busy_notification_handler(void *ctx, int times) {
         (else #f))))
 
   ;; Can finalize return BUSY?  If so, we may have erred in assuming
-  ;; we don't have to finalize immediately.
-  ;; Finalizing a finalized statement is a no-op.
+  ;; we don't have to finalize immediately.  Finalizing a finalized
+  ;; statement is a no-op.  Finalizing a finalized statement on a
+  ;; closed DB is also a no-op; it is explicitly checked for here [*], but
+  ;; if we move to tracking pending statements at the application
+  ;; level it will become automatic.
   (define (finalize stmt)
     (or (not (sqlite-statement-ptr stmt))
+        (not (sqlite-database-ptr (sqlite-statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
                    (nonnull-sqlite-statement-ptr stmt)))) ; checks db here
           (cond ((= rv status/ok)
