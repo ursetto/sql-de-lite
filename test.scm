@@ -49,6 +49,18 @@
 
 (raise-database-errors #t)
 
+(test "autocommit? reports #t outside transaction" #t
+      (call-with-database ":memory:"
+        (lambda (db)
+          (autocommit? db))))
+
+(test "autocommit? reports #f during transaction" #f
+      (call-with-database ":memory:"
+        (lambda (db)
+          (with-transaction db
+            (lambda ()
+              (autocommit? db))))))
+
 (test "Pending open queries are finalized after let-prepare"
       '((1) (3))
       (let ((db (open-database ":memory:")))
@@ -138,7 +150,7 @@
         (lambda (db) (commit db))))
 
 (test-group
- "Large integers"
+ "large integers"
  ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
  (call-with-database ":memory:"
    (lambda (db)
@@ -146,7 +158,7 @@
        (execute-sql db "create table cache(k,v);")
        ;; Note the hardcoded insert to ensure the value is correct.
        (execute-sql db "insert into cache(rowid,k,v) values(1234567890125, 'jimmy', 'dunno');")
-       (test (conc "last-insert-rowid on int64 " rowid) rowid
+       (test (conc "last-insert-rowid on int64 rowid " rowid) rowid
              (last-insert-rowid db))
        (test (conc "retrieve row containing int64 rowid " rowid)
              `(,rowid "jimmy" "dunno")
