@@ -1,4 +1,3 @@
-;; (critical) BUSY return from COMMIT not handled
 ;; pysqlite bench at http://oss.itsystementwicklung.de/trac/pysqlite/wiki/PysqliteTwoBenchmarks
 
 ;; A running read query will block writers; if not wrapped in a transaction,
@@ -12,6 +11,11 @@
 ;; We cannot run destructors on an object immediately when it goes out
 ;; of scope; we have to introduce a new scope.  Therefore we can't rely on
 ;; cursor destruction to reset statement, so cursors don't solve the problem.
+
+;; Does this type of query (read/write) need to be stepped multiple times
+;; or reset to release a read lock?
+;;  INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;
+
 
 #>  #include <sqlite3.h> <#
 #>
@@ -257,28 +261,35 @@ int busy_notification_handler(void *ctx, int times) {
         ((done) 'done)  ; stmt?
         (else #f))))
 
-  ;; Can finalize return BUSY?  If so, we may have erred in assuming
-  ;; we don't have to finalize immediately.  Finalizing a finalized
-  ;; statement is a no-op.  Finalizing a finalized statement on a
-  ;; closed DB is also a no-op; it is explicitly checked for here [*], but
-  ;; if we move to tracking pending statements at the application
-  ;; level it will become automatic.
+
+  ;; Finalize generally only returns an error if statement execution failed; we
+  ;; don't need that here.  However, it can return status/abort if the VM
+  ;; is interrupted.  We always disable our statement, return #t for
+  ;; all errors except for abort, and throw the abort.
+  
+  ;;   Finalizing a finalized statement is a no-op.  Finalizing a
+  ;;   finalized statement on a closed DB is also a no-op; it is
+  ;;   explicitly checked for here [*], but if we move to tracking
+  ;;   pending statements at the application level it will become
+  ;;   automatic.
   (define (finalize stmt)
     (or (not (sqlite-statement-ptr stmt))
         (not (sqlite-database-ptr (sqlite-statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
                    (nonnull-sqlite-statement-ptr stmt)))) ; checks db here
-          (cond ((= rv status/ok)
-                 (sqlite-statement-ptr-set! stmt #f)
-                 #t)
-                (else (database-error
-                       (sqlite-statement-db stmt) 'finalize))))))
+          (sqlite-statement-ptr-set! stmt #f)
+          (cond ((= rv status/abort)   ; not making this an error for now
+                 (database-error
+                       (sqlite-statement-db stmt) 'finalize))
+                (else #t)))))
 
-  ;; returns: statement
-  (define (reset stmt)   ; duplicates core binding
-    (let ((rv (sqlite3_reset (nonnull-sqlite-statement-ptr stmt))))
-      (cond ((= rv status/ok) stmt)
-            (else (database-error (sqlite-statement-db stmt) 'reset)))))
+  ;; Resets statement STMT.  Returns: STMT.
+  ;; sqlite3_reset only returns an error if the statement experienced
+  ;; an error, for compatibility with sqlite3_prepare.  We get the
+  ;; error from sqlite3_step, so ignore any error here.
+  (define (reset stmt)                  ; duplicates core binding
+    (sqlite3_reset (nonnull-sqlite-statement-ptr stmt))
+    stmt)
 
   (define (bind-parameters stmt . params)
     (let ((count (bind-parameter-count stmt)))

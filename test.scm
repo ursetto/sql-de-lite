@@ -265,4 +265,17 @@
                                  "select rowid, * from cache where rowid = ?;"
                                  rowid)))))))
 
+;;; Future tests
+
+;; ;; test result: reset should fail with 'operation on finalized statement'
+;; (call-with-database "a.db"
+;;   (lambda (db)
+;;     (let-prepare db ((s "select * from cache;"))
+;;       (set! *s1* s)
+;;       (sleep 10)        ; database must get locked exclusive elsewhere now
+;;       (parameterize ((raise-database-errors #f))
+;;         (and (step s) (error "step should have failed due to lock"))))
+;;     ;; Statement should successfully be finalized in let-prepare
+;;     (reset *s1*)))    ;; reset should fail with finalized statement error
+
 (test-exit)
