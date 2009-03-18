@@ -1,6 +1,18 @@
 ;; (critical) BUSY return from COMMIT not handled
 ;; pysqlite bench at http://oss.itsystementwicklung.de/trac/pysqlite/wiki/PysqliteTwoBenchmarks
 
+;; A running read query will block writers; if not wrapped in a transaction,
+;; this query will not be reset on error and writers will be blocked until
+;; it is finalized.  let-prepare will not finalize on error; normally you
+;; rely on call-with-database to close the database and finalize everything
+;; pending.  However, if your program continues, statements will be open!!
+;; a) perhaps STEP should reset on any sqlite error
+;; b) this doesn't help if a non-sqlite error is thrown; what you would
+;;    essentially need is a with-query or cursor
+;; We cannot run destructors on an object immediately when it goes out
+;; of scope; we have to introduce a new scope.  Therefore we can't rely on
+;; cursor destruction to reset statement, so cursors don't solve the problem.
+
 #>  #include <sqlite3.h> <#
 #>
 int busy_notification_handler(void *ctx, int times) {
@@ -23,6 +35,7 @@ int busy_notification_handler(void *ctx, int times) {
    prepare
    execute execute-sql
    fetch fetch-alist
+   fetch-all ; ?
    raise-database-errors
    raise-database-error
    finalize step  ; step-through
@@ -41,6 +54,7 @@ int busy_notification_handler(void *ctx, int times) {
 
    set-busy-timeout! set-busy-handler! busy-timeout-handler 
    retry-busy? reset-busy! ; internal
+   with-query first-row query
 
    ;; syntax
    let-prepare
@@ -53,11 +67,12 @@ int busy_notification_handler(void *ctx, int times) {
   (import scheme
           (except chicken reset))
   (import (only extras fprintf sprintf))
-  (require-library lolevel)
+  (require-library lolevel srfi-18)
   (import (only lolevel object->pointer object-release object-evict))
   (import (only data-structures alist-ref))
   (import (only srfi-18 thread-sleep! milliseconds->time))
   (import foreign foreigners easyffi)
+  (require-extension matchable)
 
 #>? #include "sqlite3-api.h" <#
   
@@ -216,14 +231,24 @@ int busy_notification_handler(void *ctx, int times) {
 
   ;; return #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE
   (define (step stmt)
-    (let ((rv (sqlite3_step (nonnull-sqlite-statement-ptr stmt))))
-      (cond ((= rv status/row) 'row)
-            ((= rv status/done) 'done)
-            ((= rv status/misuse)      ;; Error code/msg may not be set! :(
-             (error 'step "misuse of interface"))
-            ;; sqlite3_step handles SCHEMA error itself.
-            (else
-             (database-error (sqlite-statement-db stmt) 'step)))))
+    (let ((db (sqlite-statement-db stmt)))
+      (let retry ((times 0))
+        (reset-busy! db)
+        (let ((rv (sqlite3_step (nonnull-sqlite-statement-ptr stmt))))
+          (cond ((= rv status/row) 'row)
+                ((= rv status/done) 'done)
+                ((= rv status/misuse) ;; Error code/msg may not be set! :(
+                 (error 'step "misuse of interface"))
+                ;; sqlite3_step handles SCHEMA error itself.
+                ((= rv status/busy)
+                 (let ((bh (busy-handler)))
+                   (if (and bh
+                            (retry-busy? db)
+                            (bh db times))
+                       (retry (+ times 1))
+                       (database-error db 'step stmt))))
+                (else
+                 (database-error db 'step stmt)))))))
 
   (define (step-through stmt)
     (let loop ()
@@ -551,6 +576,36 @@ int busy_notification_handler(void *ctx, int times) {
                     e0 e1 ...)
        (call-with-prepared-statements db (list sql0 ...)
                                       (lambda (v0 ...) e0 e1 ...)))))
+
+  (define (with-query stmt thunk)
+    (let ((c (current-exception-handler)))
+      (let ((rv 
+             (with-exception-handler (lambda (ex) (reset stmt) (c ex))
+                thunk)))
+        (reset stmt)
+        rv)))
+  (define-syntax query
+    (syntax-rules ()
+      ((query statement e0 e1 ...)
+       (with-query statement (lambda () e0 e1 ...)))))
+  ;; might not be necessary with nicer syntax for with-query --
+  ;; e.g. (with-query s fetch) or (query s (fetch s))
+  ;; but we -could- avoid introducing an exception thunk
+  (define (first-row stmt)
+    (with-query stmt (lambda () (fetch stmt))))
+
+  (define (fetch-all s)
+    ;; It is possible the query is not required if database errors are off.
+    ;; Reset is also not required if statement runs to completion, but
+    ;; is always done by the query.
+    (with-query
+     s (lambda ()
+         (let loop ((L '()))
+           (match (fetch s)
+                  (() (reverse L))
+                  (#f (raise-database-error (sqlite-statement-db s)
+                                            'fetch-all))
+                  (p (loop (cons p L))))))))
   
   ;; (I think (void) and '() should both be treated as NULL)
   ;; careful of return value conflict with '() meaning SQLITE_DONE though
@@ -559,114 +614,6 @@ int busy_notification_handler(void *ctx, int times) {
 ;;       (lambda (x) (eq? v x))))
   )
 
-#|
-
-
-(begin
-  (define stmt (prepare db "create table cache(key text primary key, val text);"))
-  (step stmt)
-  (step (prepare db "insert into cache values('ostrich', 'bird');"))
-  (step (prepare db "insert into cache values('orangutan', 'monkey');"))
-)
-
-(use sqlite3-simple)
-(raise-database-errors #t)
-(define db (open-database "a.db"))
-(define stmt2 (prepare db "select rowid, key, val from cache;"))
-(step stmt2)
-(column-count stmt2)  ; => 3
-(column-type stmt2 0) ; => integer
-(column-type stmt2 1) ; => text
-(column-type stmt2 2) ; => text
-(column-data stmt2 0) ; => 1
-(column-data stmt2 1) ; => "ostrich"
-(column-data stmt2 2) ; => "orangutan"
-(row-data stmt2)
-(row-alist stmt2)
-(define stmt3 (prepare db "select rowid, key, val from cache where key = ?;"))
-(fetch (bind (reset stmt3) 1 "orangutan"))
-(fetch (bind (reset stmt3) 1 (string->blob "orangutan"))) ; fails.  dunno why
-(step (bind (prepare db "insert into cache values(?, 'z');")
-            1 (string->blob "orange2")))
-(blob->string (alist-ref 'key (fetch-alist (bind (reset stmt3) 1 (string->blob "orange2"))))) ; -> "orange2"
-(fetch stmt3)
-(define stmt4 (prepare db "select rowid, key, val from cache where rowid = ?;"))
-(fetch (bind (reset stmt4) 1 2))
-
-(call-with-database "a.db" (lambda (db) (fetch (prepare db "select * from cache;"))))
-  ; -> ("ostrich" "bird")  + finalization warning
-
-(call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, value from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))   ; #f (or error) -- invalid column name
-(call-with-database "a.db" (lambda (db) (call-with-prepared-statements db (list "select * from cache;" "select rowid, key, val from cache;") (lambda (s1 s2) (and s1 s2 (list (fetch s1) (fetch s2)))))))     ; (("ostrich" "bird") (1 "ostrich" "bird"))
-
-;; test large numbers; note 2^53=9007199254740992   -2^53 ~ 2^53-1 
-(step (prepare db "insert into cache(rowid,key,val) values(1234567890125, 'jimmy', 'dunno');")) ;=>1
-(last-insert-rowid db) => 1234567890125.0
-(fetch (bind (prepare db "select rowid, * from cache where rowid = ?;") 1 1234567890125.0))  ; => (1234567890125.0 "jimmy" "dunno")
-(execute-sql db "insert into cache(rowid,key,val) values(4294967295, 'moby', 'whale');")
-(fetch (execute-sql db "select rowid, * from cache where rowid = ?;" 4294967295))  ; => (4294967295.0 "moby" "whale")
-
-
-(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) #f))))  ; => #f, plus statement will be reset by rollback and finalized by call/db
-(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (fetch (execute-sql db "select 1 union select 2")) (error 'oops))))) ; => same as above but error is thrown
-(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)) (error 'oops))) #f))))   ; => error, same as previous
-(call-with-database ":memory:" (lambda (db) (with-transaction db (lambda () (call-with-prepared-statement db "select 1 union select 2" (lambda (s) (fetch (execute s)))) #f))))   ; => #f, statement finalized by call-with-prepared-statement
-
-(call-with-database ":memory:"
-   (lambda (db)
-     (let-prepare db ((s1 "select 1 union select 2")
-                      (s2 "select 3 union select 4"))
-        (list (fetch (execute s1)) (fetch (execute s2)))))) ;=> ((1) (3))
-
-(call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (execute-sql db "insert into cache values('jml', 'oak');"))) ;=> 1
-
-
-(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) s))))) (execute s))  ;=> Error: operation on closed database
-
-(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) s))))) (execute s))  ;=> Error: operation on closed database
-
-(call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (let-prepare db ((s "insert into cache values('jml', 'oak');")) (finalize s) (execute s)))) ;=> Error: operation on finalized statement
-
-(let ((s (call-with-database ":memory:" (lambda (db) (execute-sql db "create table cache(k,v);") (prepare db "insert into cache values('jml', 'oak');"))))) (execute s))   ;=> Error: operation on closed database
-
-(call-with-database ":memory:"
-   (lambda (db)
-     (execute-sql db "create table cache(k,v);")
-     (let-prepare db ((s "insert into cache values('jml', 'oak');"))
-                  (execute s))))  ; => 1
-
-
-(call-with-database ":memory:" (lambda (db) (rollback db))) ;=> #t (Test rollback outside transaction succeeds)
-(call-with-database ":memory:" (lambda (db) (commit db))) ;=> #t
-
-|#
-
-
 ;;; Notes
 
-
-  ;; "step SQLITE_BUSY: If the statement is a COMMIT or occurs outside
-  ;; of an explicit transaction, then you can retry the statement. If
-  ;; the statement is not a COMMIT and occurs within a explicit
-  ;; transaction then you should rollback the transaction before
-  ;; continuing."
-
-  ;; when two threads are writing, one attempts to grab a reserved
-  ;; lock and one attempts to promote reserved->exclusive, the busy
-  ;; handler is not invoked for one thread, returning busy
-  ;; immediately; that thread should rollback to proceed.  The exact
-  ;; wording is: "Do not invoke the busy callback when trying to
-  ;; promote a lock from SHARED to RESERVED."
-  ;; How do we simulate this behavior
-  ;; if we are doing our own busy handling (distinguish between temporary
-  ;; and permanent SQLITE_BUSY return)?  You can start all write
-  ;; transactions with BEGIN IMMEDIATE to alleviate (I think) but what
-  ;; about general case?
-
-;; busy handling: To know whether it is safe to retry on BUSY (i.e.
-;; non deadlock) we apparently must register a sqlite3 busy handler
-;; and have it set a parameter variable, whenever it is called.
-;; otherwise we cannot distinguish between BUSY retry and BUSY deadlock.
-;; but this requires a foreign-safe-lambda* which will slow down STEP
-;; drastically.
 

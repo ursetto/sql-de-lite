@@ -1,6 +1,12 @@
 (use test)
 (use sqlite3-simple)
 
+;; Concatenate string literals into a single literal at compile time.
+;; (string-literal "a" "b" "c") -> "abc"
+(define-syntax string-literal
+  (lambda (f r c)
+    (apply string-append (cdr f))))
+
 #|
 
 (begin
@@ -90,6 +96,68 @@
                    (error 'fetch "fetch failed during test"))
                #f ; rollback
                ))))))
+
+(test-group
+ "reset"
+ (test "with-query resets statement immediately (normal exit)"
+       '((1) (1))
+       (call-with-database ":memory:"
+         (lambda (db)
+           (let-prepare db ((s "select 1 union select 2;"))
+             (list (with-query s (lambda () (fetch s)))
+                   (with-query s (lambda () (fetch s))))))))
+ (test "with-query resets statement immediately (error exit)"
+       '((oops) (1))
+       (call-with-database ":memory:"
+         (lambda (db)
+           (let-prepare db ((s "select 1 union select 2;"))
+             (list (handle-exceptions exn '(oops)
+                     (with-query s (lambda () (fetch s) (error 'oops))))
+                   (with-query s (lambda () (fetch s)))))))))
+
+;; syntax wrong -- query body cannot access statement
+;; (test "query/fetch first-row"
+;;       '(1 2)
+;;       (call-with-database ":memory:"
+;;         (lambda (db)
+;;           (query (execute-sql db "select 1, 2 union select 3, 4;")
+;;                  (fetch s)))))
+
+(test "query/fetch first row via (query s (fetch s))"
+      '(1 2)
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let-prepare db ((s "select 1, 2 union select 3, 4;"))
+            (query s (fetch s))))))
+
+(test "query/fetch first row via first-row"
+      '(1 2)
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let-prepare db ((s "select 1, 2 union select 3, 4;"))
+            (first-row s)))))
+
+(test "query/fetch all rows via fetch-all"
+      '(((1 2) (3 4) (5 6)) reset ((1 2) (3 4) (5 6)))
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let-prepare db ((s (string-literal "select 1, 2 union "
+                                              "select 3, 4 union "
+                                              "select 5, 6;")))
+            (list (fetch-all s)
+                  'reset
+                  (fetch-all s))))))
+
+(test "fetch-all reads remaining rows mid-query"
+      '((1 2) fetch ((3 4) (5 6)))
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let-prepare db ((s (string-literal "select 1, 2 union "
+                                              "select 3, 4 union "
+                                              "select 5, 6;")))
+            (list (fetch s)
+                  'fetch
+                  (fetch-all s))))))
 
 (test "Pending open queries are finalized after let-prepare"
       '((1) (3))
@@ -188,7 +256,8 @@
        (execute-sql db "create table cache(k,v);")
        ;; Note the hardcoded insert to ensure the value is correct.
        (execute-sql db "insert into cache(rowid,k,v) values(1234567890125, 'jimmy', 'dunno');")
-       (test (conc "last-insert-rowid on int64 rowid " rowid) rowid
+       (test (conc "last-insert-rowid on int64 rowid " rowid)
+             rowid
              (last-insert-rowid db))
        (test (conc "retrieve row containing int64 rowid " rowid)
              `(,rowid "jimmy" "dunno")
