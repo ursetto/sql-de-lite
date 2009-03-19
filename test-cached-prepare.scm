@@ -2,7 +2,7 @@
 (use miscmacros)
 
 ;; Test cached statement performance.  Tests below are normalized to
-;; run in about the same amount of time (about 0.45 seconds).
+;; run in about the same amount of time (about 0.47 seconds).
 
 (define prepare/cached
   (let ((cache '()))
@@ -16,7 +16,7 @@
 (define prepare/cached/ht
   (let ((cache (make-hash-table string=?)))
     (lambda (db sql)
-      (or (hash-table-ref sql cache)
+      (or (hash-table-ref/default cache sql #f)
           (and-let* ((stmt (prepare db sql)))
             (hash-table-set! cache sql stmt)
             stmt)))))
@@ -28,20 +28,33 @@
    (lambda (db)
      ;; fill the cache with one useful then 50 dummy statements
      (prepare/cached db "select * from cache;")
-     (time (dotimes (i 50)
-               (prepare/cached db (sprintf "select ~A;" i))))
+     (dotimes (i 50)
+              (prepare/cached db (sprintf "select ~A;" i)))
 
      ;; select from front of alist
      (time (repeat 1000000 (prepare/cached db "select * from cache; ")))
      ;; select from back of alist (scan 50 statements)
-     (time (repeat  130000 (prepare/cached db "select * from cache;")))
+     (time (repeat  140000 (prepare/cached db "select * from cache;")))
      ;; prepare statement where schema must be checked (small schema)
-     (time (repeat   28000
-                   (finalize (prepare db "select * from cache;"))))
+     (time (repeat   30000
+                     (finalize (prepare db "select * from cache;"))))
      ;; prepare statement not requiring schema
-     (time (repeat   45000
-                   (finalize (prepare db "select 1;"))))
+     (time (repeat   47000
+                     (finalize (prepare db "select 1;"))))
 
+;;; rerun for hash cache
+
+     (print ":::::::::::::::::::::")
+
+     ;; fill the hash cache with one useful then 50 dummy statements
+     (prepare/cached/ht db "select * from cache;")
+     (dotimes (i 50)
+              (prepare/cached/ht db (sprintf "select ~A;" i)))
+     ;; Select random statements.
+     (time (repeat   820000 (prepare/cached/ht db "select * from cache; ")))
+     (time (repeat   830000 (prepare/cached/ht db "select * from cache;")))
+     (time (repeat   880000 (prepare/cached/ht db "select 20;")))
+     
      )
    )
 
