@@ -195,9 +195,9 @@ int busy_notification_handler(void *ctx, int times) {
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
   (define-inline (nonnull-sqlite-statement-ptr stmt)
-    ;; Implicitly check for valid db.
-    (or (and (sqlite-statement-ptr stmt)
-             (nonnull-sqlite-database-ptr (sqlite-statement-db stmt)))
+    ;; All references to statement ptr implicitly check for valid db.
+    (or (and (nonnull-sqlite-database-ptr (sqlite-statement-db stmt))
+             (sqlite-statement-ptr stmt))
         (error 'sqlite3-simple "operation on finalized statement")))
   (define-record-printer (sqlite-database db port)
     (fprintf port "#<sqlite-database ~A on ~S>"
@@ -278,7 +278,6 @@ int busy_notification_handler(void *ctx, int times) {
         (not (sqlite-database-ptr (sqlite-statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
                    (nonnull-sqlite-statement-ptr stmt)))) ; checks db here
-          (print "finalized " (nonnull-sqlite-statement-ptr stmt) " " (int->status rv))
           (sqlite-statement-ptr-set! stmt #f)
           (cond ((= rv status/abort)
                  (database-error
