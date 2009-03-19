@@ -132,7 +132,7 @@ int busy_notification_handler(void *ctx, int times) {
     sqlite3:destructor-type "SQLITE_STATIC")
   (define library-version (foreign-value "sqlite3_version" c-string))
   
-  (define raise-database-errors (make-parameter #f))
+  (define raise-database-errors (make-parameter #t))
 
   (define (execute-sql db sql . params)
     (and-let* ((s (prepare db sql)))
@@ -195,9 +195,9 @@ int busy_notification_handler(void *ctx, int times) {
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
   (define-inline (nonnull-sqlite-statement-ptr stmt)
-    ;; All references to statement ptr implicitly check for valid db.
-    (or (and (nonnull-sqlite-database-ptr (sqlite-statement-db stmt))
-             (sqlite-statement-ptr stmt))
+    ;; Implicitly check for valid db.
+    (or (and (sqlite-statement-ptr stmt)
+             (nonnull-sqlite-database-ptr (sqlite-statement-db stmt)))
         (error 'sqlite3-simple "operation on finalized statement")))
   (define-record-printer (sqlite-database db port)
     (fprintf port "#<sqlite-database ~A on ~S>"
@@ -262,10 +262,11 @@ int busy_notification_handler(void *ctx, int times) {
         (else #f))))
 
 
-  ;; Finalize generally only returns an error if statement execution failed; we
-  ;; don't need that here.  However, it can return status/abort if the VM
-  ;; is interrupted.  We always disable our statement, return #t for
-  ;; all errors except for abort, and throw the abort.
+  ;; Finalize generally only returns an error if statement execution
+  ;; failed; we don't need that here.  However, it can return
+  ;; status/abort if the VM is interrupted, or status/misuse.  We
+  ;; always disable our statement, return #t for all errors except for
+  ;; abort or misuse, and throw those.
   
   ;;   Finalizing a finalized statement is a no-op.  Finalizing a
   ;;   finalized statement on a closed DB is also a no-op; it is
@@ -277,10 +278,13 @@ int busy_notification_handler(void *ctx, int times) {
         (not (sqlite-database-ptr (sqlite-statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
                    (nonnull-sqlite-statement-ptr stmt)))) ; checks db here
+          (print "finalized " (nonnull-sqlite-statement-ptr stmt) " " (int->status rv))
           (sqlite-statement-ptr-set! stmt #f)
-          (cond ((= rv status/abort)   ; not making this an error for now
+          (cond ((= rv status/abort)
                  (database-error
-                       (sqlite-statement-db stmt) 'finalize))
+                  (sqlite-statement-db stmt) 'finalize))
+                ((= rv status/misuse)
+                 (error 'finalize "misuse of interface"))
                 (else #t)))))
 
   ;; Resets statement STMT.  Returns: STMT.
@@ -447,15 +451,18 @@ int busy_notification_handler(void *ctx, int times) {
     (let ((stmts (map (lambda (s) (prepare db s))
                       sqls)))
       (begin0 (apply proc stmts)
-        (for-each (lambda (s) (if s (finalize s)))
-                  stmts))))
+        (do ((stmts stmts (cdr stmts)))
+            ((null? stmts))
+          (if (car stmts)
+              (finalize (car stmts)))))))
 
   (define (call-with-database filename proc)
     (let ((db (open-database filename)))
-      (handle-exceptions exn
-          (begin (close-database db)
-                 (signal exn))
-        (begin0 (proc db)
+      (let ((c (current-exception-handler)))
+        (begin0
+            (with-exception-handler
+             (lambda (ex) (close-database db) (c ex))
+             (lambda () (proc db)))
           (close-database db)))))
 
   ;; Escaping or re-entering the dynamic extent of THUNK will not
@@ -627,4 +634,13 @@ int busy_notification_handler(void *ctx, int times) {
 
 ;;; Notes
 
+
+;; I would like to have execute take a procedure argument which
+;; resets the statement after finishing, but the syntax doesn't work,
+;; because execute binds parameters as well.
+;; (execute s (lambda () ...)) == (with-query (execute s) (lambda () ...))
+;; but (with-query (execute s 1 2 3) (lambda () ...)) ?= (execute (bind-parameters s 1 2 3) (lambda () ...)
+;; I guess execute could return a -procedure- but this is gross
+;; ((execute s 1 2 3) (lambda () ...))
+;; ((execute s (lambda () ...)) 1 2 3)
 

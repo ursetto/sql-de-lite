@@ -268,6 +268,7 @@
 ;;; Future tests
 
 ;; ;; test result: reset should fail with 'operation on finalized statement'
+;; (use posix)
 ;; (call-with-database "a.db"
 ;;   (lambda (db)
 ;;     (let-prepare db ((s "select * from cache;"))
