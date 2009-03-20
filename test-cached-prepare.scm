@@ -21,6 +21,17 @@
             (hash-table-set! cache sql stmt)
             stmt)))))
 
+;; TODO: prepare/cached/lru -- alist where recently-used statements move
+;; to the front.  Probably only useful if the cache size is fixed; we
+;; would have to finalize statements as they drop off, and each statement
+;; would have to be checked for preparedness at execute time.  Note:
+;; I believe statements could disappear from under us during a STEP in
+;; the pathological case.  Unless statements are always prepared
+;; opportunistically at execute time; then this problem would not occur
+;; unless you have > 100 simultaneous running queries.  However, the
+;; statement has to be prepared for us to get data on number of parameters
+;; and column count.
+
 ;; tested with schema:
 ;; create table cache(key text primary key, val text);
 

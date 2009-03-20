@@ -643,3 +643,17 @@ int busy_notification_handler(void *ctx, int times) {
 ;; ((execute s 1 2 3) (lambda () ...))
 ;; ((execute s (lambda () ...)) 1 2 3)
 
+
+;; Another idea: have (prepare db sql) return a procedure that, when called,
+;; binds its arguments in order.
+;; (let ((s (prepare db "select * from cache where key = ?;")))
+;;    (s 5))
+;; Looks cool because it's like a function call, but just syntactic sugar for
+;; (execute s 5).  And we still have to pass a thunk in to execute in
+;; a protected environment.
+
+;; (execute ((sql db "select * from cache where k = ?;") 1)
+;;   (lambda ()
+;;     (fetch)))
+
+;; (execute (sql db "
