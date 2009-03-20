@@ -53,7 +53,7 @@
 (print (cdr (alist-ref (hash "select 199;") cache-hash)))
 (time (dotimes (i 1000000)
                (let ((s "select 199;"))
-                 (and-let* ((cell (alist-ref (hash s) cache-hash)))
+                 (and-let* ((cell (alist-ref s cache-hash)))
                    (and (string=? (car cell) s)
                         (cdr cell))))))
 
