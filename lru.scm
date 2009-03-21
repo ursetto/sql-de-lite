@@ -28,7 +28,16 @@
     (syntax-rules () ((_ args ...) (define args ...))))))
 
 (define-record lru-cache ht head tail capacity deleter)
-(define-record node prev next key value)
+;; (define-record node prev next key value)
+(define (make-node prev next key value)
+  (##sys#make-structure 'node prev next key value))
+(define-inline (node? n) (eq? (##sys#slot n 0) 'node))
+(define-inline (node-prev n)  (##sys#slot n 1))
+(define-inline (node-next n)  (##sys#slot n 2))
+(define-inline (node-key n)   (##sys#slot n 3))
+(define-inline (node-value n) (##sys#slot n 4))
+(define-inline (node-prev-set! n x)  (##sys#setslot n 1 x))
+(define-inline (node-next-set! n x)  (##sys#setslot n 2 x))
 
 (define %make-lru-cache make-lru-cache)
 
