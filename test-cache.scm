@@ -90,6 +90,18 @@
 (print (lru-cache-ref C (vector-ref v (+ 100 (random 100)))))
 (time (dotimes (i 1000000)
                (lru-cache-ref C (vector-ref v (+ 100 (random 100))))))
+(print "cache size: " (lru-cache-size C)) ; 100
+
+
+(print "lru-cache lookup 2 (experimental), random (half in cache)")
+(print (lru-cache-ref-2 C (vector-ref v (random 200))))
+(time (dotimes (i 1000000)
+               (lru-cache-ref-2 C (vector-ref v (random 200)))))
+(print "lru-cache lookup 2 (experimental), random (all in cache)")
+(print (lru-cache-ref-2 C (vector-ref v (+ 100 (random 100)))))
+(time (dotimes (i 1000000)
+               (lru-cache-ref-2 C (vector-ref v (+ 100 (random 100))))))
+(print "cache size: " (lru-cache-size C)) ; 100
 
 (print "alist lookup by hashed value, size 200, random lookup")
 (print (cdr (alist-ref (string-hash (vector-ref v (random 200)))

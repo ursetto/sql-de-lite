@@ -11,6 +11,7 @@
  (export
   make-lru-cache
   lru-cache-ref
+  lru-cache-ref-2
   lru-cache-set!
   lru-cache-walk
   lru-cache-delete!
@@ -62,6 +63,46 @@
             (lru-cache-head-set! c n)
             (node-value n)
             )))))
+
+;; This is, counterintuitively, substantially faster.  Mutations
+;; are reduced to less than 2% of the node-mutating code.
+(define (lru-cache-ref-2 c k)
+  (and-let* ((n (lookup c k)))
+    (if (not (node-prev n))             ; mru
+        (node-value n)
+        (begin
+          (let ((pr (node-prev n))
+                (nx (node-next n))
+                (ht (lru-cache-ht c)))
+            (when pr
+              (let ((pr* (make-node
+                          (node-prev pr)
+                          nx
+                          (node-key pr)
+                          (node-value pr))))
+                (hash-table-set! ht (node-key pr) pr*)
+                (when (eq? n (lru-cache-tail c))
+                  (lru-cache-tail-set! c pr*))))
+
+            (when nx
+              (hash-table-set! ht (node-key nx)
+                               (make-node
+                                pr
+                                (node-next nx)
+                                (node-key nx)
+                                (node-value nx))))
+            (let* ((head (lru-cache-head c))
+                   (v (node-value n))
+                   (new (make-node #f head k v)))
+              (hash-table-set! ht k new)
+              (hash-table-set! ht (node-key head)
+                               (make-node
+                                new
+                                (node-next head)
+                                (node-key head)
+                                (node-value head)))
+              (lru-cache-head-set! c new)
+              v))))))
 
 (define (lru-cache-set! c k v)
   (let ((old (lookup c k)))
@@ -123,7 +164,7 @@
 
 #|
 
-
+(define (walk) (lru-cache-walk C (lambda (k v) (write (cons k v)) (newline))))
 (define C (make-lru-cache 5 string=?))
 (lru-cache-set! C "hi there" 'hi-there)
 (eq? (lru-cache-ref C "hi there") 'hi-there)     ; #t
