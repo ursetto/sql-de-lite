@@ -23,17 +23,12 @@
 (use miscmacros)
 
 (print "alist lookup by hashed value (end of 50 elt list)")
-(print (cdr (alist-ref (hash "select 49;") cache-hash)))
+(print (cdr (alist-ref (string-hash "select 49;") cache-hash)))
 (time (dotimes (i 1000000)
                (let ((s "select 49;"))
-                 (and-let* ((cell (alist-ref (hash s) cache-hash)))
+                 (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
                    (and (string=? (car cell) s)
                         (cdr cell))))))
-
-(print "alist lookup by string=? (end of 50 elt list)")
-(print (alist-ref "select 49;" cache-string string=?))
-(time (dotimes (i 1000000)
-               (alist-ref "select 49;" cache-string string=?)))
 
 (print "hash-table lookup by string=?")
 (print (hash-table-ref/default cache-hash-table "select 49;" #f))
@@ -42,28 +37,44 @@
 
 ;; Slower than hash table.  How is that possible?
 (print "alist lookup by hashed value (first element)")
-(print (cdr (alist-ref (hash "select 0;") cache-hash)))
+(print (cdr (alist-ref (string-hash "select 0;") cache-hash)))
 (time (dotimes (i 1000000)
                (let ((s "select 0;"))
-                 (and-let* ((cell (alist-ref (hash s) cache-hash)))
+                 (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
                    (and (string=? (car cell) s)
                         (cdr cell))))))
+
+(print "(hash \"select 0;\")")
+(time (dotimes (i 1000000)
+               (let ((s "select 0;"))
+                 (hash s))))
+
+(print "(string-hash \"select 0;\")")
+(time (dotimes (i 1000000)
+               (let ((s "select 0;"))
+                 (string-hash s))))
 
 (print "alist lookup by hashed value (200th element)")
-(print (cdr (alist-ref (hash "select 199;") cache-hash)))
+(print (cdr (alist-ref (string-hash "select 199;") cache-hash)))
 (time (dotimes (i 1000000)
                (let ((s "select 199;"))
-                 (and-let* ((cell (alist-ref s cache-hash)))
+                 (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
                    (and (string=? (car cell) s)
                         (cdr cell))))))
-
-(print "alist lookup by string=? (200th elt)")
-(print (alist-ref "select 199;" cache-string string=?))
-(time (dotimes (i 1000000)
-               (alist-ref "select 199;" cache-string string=?)))
 
 (print "hash-table lookup by string=? (200th elt)")
 (print (hash-table-ref/default cache-hash-table "select 199;" #f))
 (time (dotimes (i 1000000)
                (hash-table-ref/default cache-hash-table "select 199;" #f)))
+
+(print "alist lookup by string=? (end of 50 elt list)")
+(print (alist-ref "select 49;" cache-string string=?))
+(time (dotimes (i 1000000)
+               (alist-ref "select 49;" cache-string string=?)))
+
+
+(print "alist lookup by string=? (200th elt)")
+(print (alist-ref "select 199;" cache-string string=?))
+(time (dotimes (i 1000000)
+               (alist-ref "select 199;" cache-string string=?)))
 
