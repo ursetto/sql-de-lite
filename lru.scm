@@ -64,8 +64,7 @@
             (node-value n)
             )))))
 
-;; This is, counterintuitively, substantially faster.  Mutations
-;; are reduced to less than 2% of the node-mutating code.
+;; A bit slower, and many more GCs.
 (define (lru-cache-ref-2 c k)
   (and-let* ((n (lookup c k)))
     (if (not (node-prev n))             ; mru
@@ -75,32 +74,17 @@
                 (nx (node-next n))
                 (ht (lru-cache-ht c)))
             (when pr
-              (let ((pr* (make-node
-                          (node-prev pr)
-                          nx
-                          (node-key pr)
-                          (node-value pr))))
-                (hash-table-set! ht (node-key pr) pr*)
-                (when (eq? n (lru-cache-tail c))
-                  (lru-cache-tail-set! c pr*))))
-
+              (node-next-set! pr nx)
+              (when (eq? n (lru-cache-tail c))
+                (lru-cache-tail-set! c pr)))
             (when nx
-              (hash-table-set! ht (node-key nx)
-                               (make-node
-                                pr
-                                (node-next nx)
-                                (node-key nx)
-                                (node-value nx))))
+              (node-prev-set! nx pr))
+            
             (let* ((head (lru-cache-head c))
                    (v (node-value n))
                    (new (make-node #f head k v)))
+              (node-prev-set! head new)
               (hash-table-set! ht k new)
-              (hash-table-set! ht (node-key head)
-                               (make-node
-                                new
-                                (node-next head)
-                                (node-key head)
-                                (node-value head)))
               (lru-cache-head-set! c new)
               v))))))
 
@@ -210,9 +194,10 @@
 
 (repeat 10
         (let ((s (vector-ref vs (random (vector-length vs)))))
-          (lru-cache-ref-2 C2 (vector-ref vs (random (vector-length vs))))
+          (lru-cache-ref-2 C2 s)
           (print "-- chose " s)
-          (walk C2)))
+          (walk C2)
+          ))
 (walk C2)
 
 
