@@ -21,6 +21,7 @@
     ht))
 
 (use miscmacros)
+(require-library lru)
 
 (print "alist lookup by hashed value (end of 50 elt list)")
 (print (cdr (alist-ref (string-hash "select 49;") cache-hash)))
@@ -66,6 +67,46 @@
 (print (hash-table-ref/default cache-hash-table "select 199;" #f))
 (time (dotimes (i 1000000)
                (hash-table-ref/default cache-hash-table "select 199;" #f)))
+
+;;; lru
+
+(print "lru-cache populate 200 (capacity 100)")
+(define C (make-lru-cache 100 string=?))
+(time (for-each (lambda (x)
+                  (lru-cache-set! C x x))
+                selects))               ; should split up, half and half
+(print "lru-cache lookup, select 100;")
+(print (lru-cache-ref C "select 100;"))
+(time (dotimes (i 1000000)
+               (lru-cache-ref C "select 100;")))
+
+;; not a good test
+(print "lru-cache lookup, random (half in cache)")
+(define v (list->vector selects))
+(print (lru-cache-ref C (vector-ref v (random 200))))
+(time (dotimes (i 1000000)
+               (lru-cache-ref C (vector-ref v (random 200)))))
+(print "lru-cache lookup, random (all in cache)")
+(print (lru-cache-ref C (vector-ref v (+ 100 (random 100)))))
+(time (dotimes (i 1000000)
+               (lru-cache-ref C (vector-ref v (+ 100 (random 100))))))
+
+(print "alist lookup by hashed value, size 200, random lookup")
+(print (cdr (alist-ref (string-hash (vector-ref v (random 200)))
+                       cache-hash)))
+(time (dotimes (i 1000000)
+               (let ((s (vector-ref v (random 200))))
+                 (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
+                   (and (string=? (car cell) s)
+                        (cdr cell))))))
+
+;; unused
+(define C (make-lru-cache 100 string=?
+                          (lambda (k v)
+                            (printf "deleting (~S ~S)\n" k v))))
+
+
+;;; unusable
 
 (print "alist lookup by string=? (end of 50 elt list)")
 (print (alist-ref "select 49;" cache-string string=?))

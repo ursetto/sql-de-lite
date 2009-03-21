@@ -97,6 +97,17 @@
       ((not n))
     (proc (node-key n) (node-value n))))
 
+(define (lru-cache-flush! c)
+  (lru-cache-walk c
+                  (lambda (k v)
+                    ((lru-cache-deleter c) k v)))
+  (let ((ht (lru-cache-ht c)))
+    (lru-cache-ht-set! c (make-hash-table (lru-cache-capacity c)
+                                          (hash-table-equivalence-function ht)))
+    (lru-cache-head-set! c #f)
+    (lru-cache-tail-set! c #f)))
+
+
 #|
 
 
