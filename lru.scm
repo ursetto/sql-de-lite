@@ -4,7 +4,20 @@
 ;; is 0.
 
 (declare
- (fixnum))
+ (fixnum)
+ (usual-integrations)
+ (no-bound-checks)
+ (no-procedure-checks-for-usual-bindings)
+ (export
+  make-lru-cache
+  lru-cache-ref
+  lru-cache-set!
+  lru-cache-walk
+  lru-cache-delete!
+  lru-cache-flush!
+  lru-cache-size
+  )
+ )
 
 (cond-expand
  (compiling)
