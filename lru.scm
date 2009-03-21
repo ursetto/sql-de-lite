@@ -2,6 +2,7 @@
 
 ;; FIXME: accessors must be updated to silently fail when cache capacity
 ;; is 0.
+;; Optional: accept #t for size; in this case, act as a plain hash table.
 
 (declare
  (fixnum)
@@ -38,18 +39,6 @@
 (define-inline (lookup c k)
   (hash-table-ref/default (lru-cache-ht c) k #f))
 
-(define-inline (splice-out! x)
-  (let ((p (node-prev x))
-        (n (node-next x)))
-    (when p
-      (node-next-set! p n)
-      (node-prev-set! x #f))
-    (when n
-      (node-prev-set! n p)
-;;       (node-next-set! x #f)
-      )
-    n))
-
 (define (lru-cache-ref c k)
   (and-let* ((n (lookup c k)))
     (if (not (node-prev n))             ; mru
@@ -70,7 +59,7 @@
             (node-value n)
             )))))
 
-;; A bit slower, and many more GCs.
+;; Quite a bit slower, and many more GCs.
 (define (lru-cache-ref-2 c k)
   (and-let* ((n (lookup c k)))
     (if (not (node-prev n))             ; mru
@@ -117,7 +106,10 @@
       (lru-cache-tail-set! c (node-prev n)))
     (when (eq? n (lru-cache-head c))
       (lru-cache-head-set! c (node-next n)))
-    (splice-out! n)
+    (let ((nx (node-next n))
+          (pr (node-prev n)))
+      (when pr (node-next-set! pr nx))
+      (when nx (node-prev-set! nx pr)))
     (if (lru-cache-deleter c)
         ((lru-cache-deleter c) k (node-value n))
         #t)))

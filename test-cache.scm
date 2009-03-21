@@ -55,6 +55,14 @@
                (let ((s "select 0;"))
                  (string-hash s))))
 
+(print "alist lookup by hashed value (100th element)")
+(print (cdr (alist-ref (string-hash "select 99;") cache-hash)))
+(time (dotimes (i 1000000)
+               (let ((s "select 99;"))
+                 (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
+                   (and (string=? (car cell) s)
+                        (cdr cell))))))
+
 (print "alist lookup by hashed value (200th element)")
 (print (cdr (alist-ref (string-hash "select 199;") cache-hash)))
 (time (dotimes (i 1000000)
