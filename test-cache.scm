@@ -70,7 +70,7 @@
 
 ;;; lru
 
-(print "lru-cache populate 200 (capacity 100)")
+(print "lru-cache populate 100 (capacity 100)")
 (define C (make-lru-cache 100 string=?))
 (time (for-each (lambda (x)
                   (lru-cache-set! C x x))
@@ -91,17 +91,21 @@
 (time (dotimes (i 1000000)
                (lru-cache-ref C (vector-ref v (+ 100 (random 100))))))
 (print "cache size: " (lru-cache-size C)) ; 100
-
-
+(lru-cache-walk C (lambda (k v)
+                    (write (cons k v)) (write " ")))
 (print "lru-cache lookup 2 (experimental), random (half in cache)")
 (print (lru-cache-ref-2 C (vector-ref v (random 200))))
 (time (dotimes (i 1000000)
                (lru-cache-ref-2 C (vector-ref v (random 200)))))
+(lru-cache-walk C (lambda (k v)
+                    (write (cons k v)) (write " ")))
 (print "lru-cache lookup 2 (experimental), random (all in cache)")
 (print (lru-cache-ref-2 C (vector-ref v (+ 100 (random 100)))))
 (time (dotimes (i 1000000)
                (lru-cache-ref-2 C (vector-ref v (+ 100 (random 100))))))
 (print "cache size: " (lru-cache-size C)) ; 100
+(lru-cache-walk C (lambda (k v)
+                    (write (cons k v)) (write " ")))
 
 (print "alist lookup by hashed value, size 200, random lookup")
 (print (cdr (alist-ref (string-hash (vector-ref v (random 200)))
@@ -111,7 +115,14 @@
                  (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
                    (and (string=? (car cell) s)
                         (cdr cell))))))
-
+(print "alist lookup by hashed value, size 200, random lookup in first half")
+(print (cdr (alist-ref (string-hash (vector-ref v (random 100)))
+                       cache-hash)))
+(time (dotimes (i 1000000)
+               (let ((s (vector-ref v (random 100))))
+                 (and-let* ((cell (alist-ref (string-hash s) cache-hash)))
+                   (and (string=? (car cell) s)
+                        (cdr cell))))))
 ;; unused
 (define C (make-lru-cache 100 string=?
                           (lambda (k v)
@@ -120,14 +131,14 @@
 
 ;;; unusable
 
-(print "alist lookup by string=? (end of 50 elt list)")
-(print (alist-ref "select 49;" cache-string string=?))
-(time (dotimes (i 1000000)
-               (alist-ref "select 49;" cache-string string=?)))
+;; (print "alist lookup by string=? (end of 50 elt list)")
+;; (print (alist-ref "select 49;" cache-string string=?))
+;; (time (dotimes (i 1000000)
+;;                (alist-ref "select 49;" cache-string string=?)))
 
 
-(print "alist lookup by string=? (200th elt)")
-(print (alist-ref "select 199;" cache-string string=?))
-(time (dotimes (i 1000000)
-               (alist-ref "select 199;" cache-string string=?)))
+;; (print "alist lookup by string=? (200th elt)")
+;; (print (alist-ref "select 199;" cache-string string=?))
+;; (time (dotimes (i 1000000)
+;;                (alist-ref "select 199;" cache-string string=?)))
 

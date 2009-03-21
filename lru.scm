@@ -192,4 +192,28 @@
 (lru-cache-set! C "e" 5)   ; should roll off "a"
 (lru-cache-set! C "b" 3)   ; should change value of b to 3, does not alter order
 
+
+;;; stress test
+
+(use miscmacros)
+(define ss
+  (list "a" "b" "c" "d" "e" "f" "g"))
+(define vs (list->vector ss))
+
+(define C2 (make-lru-cache 5 string=?))
+(define (walk C) (lru-cache-walk C (lambda (k v) (write (cons k v)) (newline))))
+
+(for-each (lambda (x)
+            (lru-cache-set! C2 x (conc "*" x "*")))
+          ss)
+(walk C2)
+
+(repeat 10
+        (let ((s (vector-ref vs (random (vector-length vs)))))
+          (lru-cache-ref-2 C2 (vector-ref vs (random (vector-length vs))))
+          (print "-- chose " s)
+          (walk C2)))
+(walk C2)
+
+
 |#
