@@ -90,6 +90,10 @@
 (print (lru-cache-ref C (vector-ref v (+ 100 (random 100)))))
 (time (dotimes (i 1000000)
                (lru-cache-ref C (vector-ref v (+ 100 (random 100))))))
+(print "lru-cache lookup, none in cache")
+(print (lru-cache-ref C "abcdef;"))
+(time (dotimes (i 1000000)
+               (lru-cache-ref C "abcdef;")))
 (print "cache size: " (lru-cache-size C)) ; 100
 ;; (lru-cache-walk C (lambda (k v)
 ;;                     (write (cons k v)) (write " ")))

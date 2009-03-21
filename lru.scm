@@ -46,17 +46,23 @@
       (node-prev-set! x #f))
     (when n
       (node-prev-set! n p)
-      (node-next-set! x #f))
+;;       (node-next-set! x #f)
+      )
     n))
 
 (define (lru-cache-ref c k)
   (and-let* ((n (lookup c k)))
     (if (not (node-prev n))             ; mru
         (node-value n)
-        (begin
-          (when (eq? n (lru-cache-tail c))
-            (lru-cache-tail-set! c (node-prev n)))
-          (splice-out! n)
+        (let ((nx (node-next n))
+              (pr (node-prev n)))
+          (when pr
+            (node-next-set! pr nx)
+            (node-prev-set! n #f)
+            (when (eq? n (lru-cache-tail c))
+              (lru-cache-tail-set! c pr)))
+          (when nx
+            (node-prev-set! nx pr))
           (let ((head (lru-cache-head c)))
             (node-prev-set! head n)
             (node-next-set! n head)
@@ -194,7 +200,7 @@
 
 (repeat 10
         (let ((s (vector-ref vs (random (vector-length vs)))))
-          (lru-cache-ref-2 C2 s)
+          (lru-cache-ref C2 s)
           (print "-- chose " s)
           (walk C2)
           ))
