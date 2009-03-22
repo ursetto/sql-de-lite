@@ -9,6 +9,8 @@
  (usual-integrations)
  (no-bound-checks)
  (no-procedure-checks-for-usual-bindings)
+ (bound-to-procedure
+  ##sys#slot ##sys#setslot)
  (export
   make-lru-cache
   lru-cache-ref
@@ -21,11 +23,11 @@
   )
  )
 
-(cond-expand
- (compiling)
- (else
-  (define-syntax define-inline
-    (syntax-rules () ((_ args ...) (define args ...))))))
+;; (cond-expand
+;;  (compiling)
+;;  (else
+;;   (define-syntax define-inline
+;;     (syntax-rules () ((_ args ...) (define args ...))))))
 
 (define-record lru-cache ht head tail capacity deleter)
 ;; (define-record node prev next key value)
@@ -38,6 +40,11 @@
 (define-inline (node-value n) (##sys#slot n 4))
 (define-inline (node-prev-set! n x)  (##sys#setslot n 1 x))
 (define-inline (node-next-set! n x)  (##sys#setslot n 2 x))
+
+(define-inline (%lru-cache-head c) (##sys#slot c 2))
+(define-inline (%lru-cache-head-set! c n) (##sys#setslot c 2 n))
+(define-inline (%lru-cache-tail c) (##sys#slot c 3))
+(define-inline (%lru-cache-tail-set! c n) (##sys#setslot c 3 n))
 
 (define %make-lru-cache make-lru-cache)
 
@@ -52,19 +59,19 @@
   (and-let* ((n (lookup c k)))
     (if (not (node-prev n))             ; mru
         (node-value n)
-        (let ((nx (node-next n))
-              (pr (node-prev n)))
+        (let ((nx (node-next n))   ; next
+              (pr (node-prev n)))  ; prev
           (when pr
             (node-next-set! pr nx)
             (node-prev-set! n #f)
-            (when (eq? n (lru-cache-tail c))
-              (lru-cache-tail-set! c pr)))
+            (when (eq? n (%lru-cache-tail c))
+              (%lru-cache-tail-set! c pr)))
           (when nx
             (node-prev-set! nx pr))
-          (let ((head (lru-cache-head c)))
+          (let ((head (%lru-cache-head c)))
             (node-prev-set! head n)
             (node-next-set! n head)
-            (lru-cache-head-set! c n)
+            (%lru-cache-head-set! c n)
             (node-value n)
             )))))
 

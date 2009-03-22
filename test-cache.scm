@@ -21,7 +21,7 @@
     ht))
 
 (use miscmacros)
-(require-library lru)
+(load "lru.so")
 
 (print "alist lookup by hashed value (end of 50 elt list)")
 (print (cdr (alist-ref (string-hash "select 49;") cache-hash)))
