@@ -1,56 +1,56 @@
 alist lookup by hashed value (end of 50 elt list)
 ** select 49; **
-   0.652 seconds elapsed
-   0.002 seconds in (major) GC
+   0.662 seconds elapsed
+   0.004 seconds in (major) GC
        0 mutations
-    1463 minor GCs
+    1464 minor GCs
        4 major GCs
 hash-table lookup by string=?
 ** select 49; **
    0.403 seconds elapsed
-   0.002 seconds in (major) GC
+   0.001 seconds in (major) GC
        0 mutations
     1824 minor GCs
        3 major GCs
 alist lookup by hashed value (first element)
 ** select 0; **
-   0.467 seconds elapsed
-   0.002 seconds in (major) GC
+   0.476 seconds elapsed
+   0.001 seconds in (major) GC
        0 mutations
-    1906 minor GCs
+    1900 minor GCs
        4 major GCs
 (hash "select 0;")
-   0.331 seconds elapsed
+   0.315 seconds elapsed
    0.002 seconds in (major) GC
        0 mutations
-    2643 minor GCs
+    2644 minor GCs
        2 major GCs
 (string-hash "select 0;")
    0.207 seconds elapsed
    0.001 seconds in (major) GC
        0 mutations
-    3182 minor GCs
+    3183 minor GCs
        1 major GCs
 alist lookup by hashed value (100th element)
 ** select 99; **
-   0.799 seconds elapsed
-   0.004 seconds in (major) GC
+   0.824 seconds elapsed
+   0.002 seconds in (major) GC
        0 mutations
-    1311 minor GCs
+    1308 minor GCs
        4 major GCs
 alist lookup by hashed value (200th element)
 ** select 199; **
-   1.183 seconds elapsed
-   0.002 seconds in (major) GC
+   1.159 seconds elapsed
+   0.001 seconds in (major) GC
        0 mutations
-    1159 minor GCs
+    1151 minor GCs
        4 major GCs
 hash-table lookup by string=? (200th elt)
 ** select 199; **
-   0.408 seconds elapsed
-   0.002 seconds in (major) GC
+   0.412 seconds elapsed
+   0.003 seconds in (major) GC
        0 mutations
-    1551 minor GCs
+    1545 minor GCs
        3 major GCs
 lru-cache populate 100 (capacity 100)
    0.001 seconds elapsed
@@ -60,44 +60,57 @@ lru-cache populate 100 (capacity 100)
        0 major GCs
 lru-cache lookup, select 100;
 select 100;
-   0.483 seconds elapsed
+   0.506 seconds elapsed
    0.003 seconds in (major) GC
        0 mutations
-    1149 minor GCs
+     471 minor GCs
        5 major GCs
+random number overhead
+   0.266 seconds elapsed
+   0.001 seconds in (major) GC
+       0 mutations
+    1989 minor GCs
+       1 major GCs
 lru-cache lookup, random (half in cache)
-select 123;
-   0.769 seconds elapsed
+select 144;
+   0.789 seconds elapsed
    0.004 seconds in (major) GC
- 2468418 mutations
-    1617 minor GCs
-       6 major GCs
-lru-cache lookup, random (all in cache)
-select 199;
-   0.868 seconds elapsed
-   0.004 seconds in (major) GC
- 4940289 mutations
-    1141 minor GCs
+ 2470470 mutations
+     682 minor GCs
        7 major GCs
-lru-cache lookup, none in cache
+lru-cache lookup, random (all in cache)
+select 110;
+   0.901 seconds elapsed
+   0.004 seconds in (major) GC
+ 4941424 mutations
+    1357 minor GCs
+       7 major GCs
+lru-cache lookup of static uncached element
 #f
-   0.406 seconds elapsed
+   0.429 seconds elapsed
    0.003 seconds in (major) GC
        0 mutations
-    1069 minor GCs
-       4 major GCs
-cache size: 100
-alist lookup by hashed value, size 200, random lookup
-** select 131; **
-   1.076 seconds elapsed
-   0.003 seconds in (major) GC
-       0 mutations
-     952 minor GCs
+    1383 minor GCs
        5 major GCs
-alist lookup by hashed value, size 200, random lookup in first half
-** select 41; **
-   0.881 seconds elapsed
+lru-cache lookup of static uncached element plus random # overhead
+#f
+    0.64 seconds elapsed
    0.002 seconds in (major) GC
        0 mutations
-     428 minor GCs
+    2115 minor GCs
+       5 major GCs
+cache size: 100
+alist lookup by hashed value, size 200, random lookup
+** select 32; **
+   1.069 seconds elapsed
+   0.004 seconds in (major) GC
+       0 mutations
+    1933 minor GCs
+       5 major GCs
+alist lookup by hashed value, size 200, random lookup in first half
+** select 8; **
+   0.892 seconds elapsed
+   0.004 seconds in (major) GC
+       0 mutations
+    1402 minor GCs
        5 major GCs
