@@ -21,7 +21,7 @@
     ht))
 
 (use miscmacros)
-(load "lru.so")
+(use lru-cache)
 
 (print "alist lookup by hashed value (end of 50 elt list)")
 (print (cdr (alist-ref (string-hash "select 49;") cache-hash)))
@@ -88,9 +88,11 @@
 (time (dotimes (i 1000000)
                (lru-cache-ref C "select 100;")))
 
-;; not a good test
-(print "lru-cache lookup, random (half in cache)")
 (define v (list->vector selects))
+(print "random number overhead")
+(time (dotimes (i 1000000)
+               (vector-ref v (random 200))))
+(print "lru-cache lookup, random (half in cache)")
 (print (lru-cache-ref C (vector-ref v (random 200))))
 (time (dotimes (i 1000000)
                (lru-cache-ref C (vector-ref v (random 200)))))
@@ -98,10 +100,16 @@
 (print (lru-cache-ref C (vector-ref v (+ 100 (random 100)))))
 (time (dotimes (i 1000000)
                (lru-cache-ref C (vector-ref v (+ 100 (random 100))))))
-(print "lru-cache lookup, none in cache")
+(print "lru-cache lookup of static uncached element")
 (print (lru-cache-ref C "abcdef;"))
 (time (dotimes (i 1000000)
                (lru-cache-ref C "abcdef;")))
+(print "lru-cache lookup of static uncached element plus random # overhead")
+(print (lru-cache-ref C "abcdef;"))
+(time (dotimes (i 1000000)
+               (vector-ref v (random 200))
+               (lru-cache-ref C "abcdef;")))
+
 (print "cache size: " (lru-cache-size C)) ; 100
 ;; (lru-cache-walk C (lambda (k v)
 ;;                     (write (cons k v)) (write " ")))
