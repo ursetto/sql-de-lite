@@ -16,6 +16,7 @@
   lru-cache-ref
   lru-cache-set!
   lru-cache-walk
+  lru-cache-fold
   lru-cache-delete!
   lru-cache-flush!
   lru-cache-size
@@ -108,16 +109,13 @@
         ((%lru-cache-deleter c) k (%node-value n))
         #t)))
 
-;; (define (lru-cache-fold c kons knil)
-;;   (do ((n (lru-cache-head n) (node-next n)))
-;;       ((not (node-next n)) )
-;;       )
-;;   (kons )
-  
-;;   (lru-cache-head c)
-  
-
-;;   )
+(define (lru-cache-fold c kons knil)
+  (let loop ((x (lru-cache-head c))
+             (xs knil))
+    (if (not x)
+        xs
+        (loop (node-next x)
+              (kons (node-key x) (node-value x) xs)))))
 
 ;; Call (proc k v) for each key, value in the cache.  Nodes are
 ;; traversed from MRU to LRU.
