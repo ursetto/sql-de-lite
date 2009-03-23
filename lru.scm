@@ -23,81 +23,66 @@
   )
  )
 
-;; (cond-expand
-;;  (compiling)
-;;  (else
-;;   (define-syntax define-inline
-;;     (syntax-rules () ((_ args ...) (define args ...))))))
+(use record-variants)
+
+(cond-expand
+ (compiling)
+ (else
+  (define-syntax define-inline
+    (syntax-rules () ((_ args ...) (define args ...))))))
 
 (define-record lru-cache ht head tail capacity deleter)
-;; (define-record node prev next key value)
-(define (make-node prev next key value)
-  (##sys#make-structure 'node prev next key value))
-(define-inline (node? n) (eq? (##sys#slot n 0) 'node))
-(define-inline (node-prev n)  (##sys#slot n 1))
-(define-inline (node-next n)  (##sys#slot n 2))
-(define-inline (node-key n)   (##sys#slot n 3))
-(define-inline (node-value n) (##sys#slot n 4))
-(define-inline (node-prev-set! n x)  (##sys#setslot n 1 x))
-(define-inline (node-next-set! n x)  (##sys#setslot n 2 x))
+(define-record-variant (%lru-cache lru-cache)
+  (unsafe unchecked inline)
+  ht head tail capacity deleter)
 
-(define-inline (%lru-cache-head c) (##sys#slot c 2))
-(define-inline (%lru-cache-head-set! c n) (##sys#setslot c 2 n))
-(define-inline (%lru-cache-tail c) (##sys#slot c 3))
-(define-inline (%lru-cache-tail-set! c n) (##sys#setslot c 3 n))
+(define-record node prev next key value)
+(define-record-variant (%node node)
+  (unsafe unchecked inline)
+  prev next key value)
 
-(define %make-lru-cache make-lru-cache)
+;; (define-record-type-variant (%lru-cache lru-cache)
+;;   (unsafe unchecked inline)
+;;   (make-lru-cache ht head tail capacity deleter)  ; necessary?
+;;   (%lru-cache? %check-lru-cache)     
+;;   (ht %lru-cache-ht)
+;;   (head %lru-cache-head %lru-cache-head-set!)     
+;;   (tail %lru-cache-tail %lru-cache-tail-set!)
+;;   (capacity %lru-cache-capacity)
+;;   (deleter %lru-cache-deleter))
 
-(define (make-lru-cache capacity comparator #!key (on-delete #f))
-  (let ((ht (make-hash-table comparator)))
-    (%make-lru-cache ht #f #f capacity on-delete)))
+(define make-lru-cache
+  (let ((%make-lru-cache make-lru-cache))
+    (lambda (capacity comparator #!key (on-delete #f))
+      (let ((ht (make-hash-table comparator)))
+        (%make-lru-cache ht #f #f capacity on-delete)))))
 
 (define-inline (lookup c k)
   (hash-table-ref/default (lru-cache-ht c) k #f))
 
 (define (lru-cache-ref c k)
   (and-let* ((n (lookup c k)))
-    (if (not (node-prev n))             ; mru
-        (node-value n)
-        (let ((nx (node-next n))   ; next
-              (pr (node-prev n)))  ; prev
+    (check-%node n)
+    (if (not (%node-prev n))             ; mru
+        (%node-value n)
+        (let ((nx (%node-next n))   ; next
+              (pr (%node-prev n)))  ; prev
           (when pr
-            (node-next-set! pr nx)
-            (node-prev-set! n #f)
+            (check-%node pr)
+            (%node-next-set! pr nx)
+            (%node-prev-set! n #f)
             (when (eq? n (%lru-cache-tail c))
               (%lru-cache-tail-set! c pr)))
           (when nx
-            (node-prev-set! nx pr))
+            (check-%node nx)
+            (%node-prev-set! nx pr))
           (let ((head (%lru-cache-head c)))
-            (node-prev-set! head n)
-            (node-next-set! n head)
+            (check-%node head)
+            (%node-prev-set! head n)
+            (%node-next-set! n head)
             (%lru-cache-head-set! c n)
-            (node-value n)
+            (%node-value n)
             )))))
-
-;; Quite a bit slower, and many more GCs.
-(define (lru-cache-ref-2 c k)
-  (and-let* ((n (lookup c k)))
-    (if (not (node-prev n))             ; mru
-        (node-value n)
-        (begin
-          (let ((pr (node-prev n))
-                (nx (node-next n))
-                (ht (lru-cache-ht c)))
-            (when pr
-              (node-next-set! pr nx)
-              (when (eq? n (lru-cache-tail c))
-                (lru-cache-tail-set! c pr)))
-            (when nx
-              (node-prev-set! nx pr))
-            
-            (let* ((head (lru-cache-head c))
-                   (v (node-value n))
-                   (new (make-node #f head k v)))
-              (node-prev-set! head new)
-              (hash-table-set! ht k new)
-              (lru-cache-head-set! c new)
-              v))))))
 
 (define (lru-cache-set! c k v)
   (let ((old (lookup c k)))
