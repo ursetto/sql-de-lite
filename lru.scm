@@ -14,7 +14,6 @@
  (export
   make-lru-cache
   lru-cache-ref
-  lru-cache-ref-2
   lru-cache-set!
   lru-cache-walk
   lru-cache-delete!
@@ -59,6 +58,10 @@
 
 (define-inline (lookup c k)
   (hash-table-ref/default (lru-cache-ht c) k #f))
+(define (lru-cache-size c)
+  (hash-table-size (lru-cache-ht c)))
+(define-inline (%lru-cache-size c)               ; dangerous
+  (hash-table-size (%lru-cache-ht c)))
 
 (define (lru-cache-ref c k)
   (and-let* ((n (lookup c k)))
@@ -87,10 +90,10 @@
   (let ((old (lookup c k)))
     (if old
         (node-value-set! old v)
-        (let ((new (make-node #f (%lru-cache-head c) k v)))
+        (let ((new (make-%node #f (%lru-cache-head c) k v)))
           (when (>= (%lru-cache-size c)
                     (%lru-cache-capacity c))  ; FIXME assert difference is 0
-            (%lru-cache-delete! c (node-key (%lru-cache-tail c))))
+            (lru-cache-delete! c (node-key (%lru-cache-tail c))))
           (unless (%lru-cache-tail c)
             (%lru-cache-tail-set! c new))
           (when (%lru-cache-head c)
@@ -114,9 +117,6 @@
     (if (%lru-cache-deleter c)
         ((%lru-cache-deleter c) k (%node-value n))
         #t)))
-
-(define (lru-cache-size c)
-  (hash-table-size (lru-cache-ht c)))
 
 ;; (define (lru-cache-fold c kons knil)
 ;;   (do ((n (lru-cache-head n) (node-next n)))
