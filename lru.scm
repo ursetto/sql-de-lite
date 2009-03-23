@@ -43,7 +43,7 @@
 
 ;; (define-record-type-variant (%lru-cache lru-cache)
 ;;   (unsafe unchecked inline)
-;;   (make-lru-cache ht head tail capacity deleter)  ; necessary?
+;;   (%make-lru-cache ht head tail capacity deleter)  ; necessary?
 ;;   (%lru-cache? %check-lru-cache)     
 ;;   (ht %lru-cache-ht)
 ;;   (head %lru-cache-head %lru-cache-head-set!)     
@@ -81,38 +81,38 @@
             (%node-prev-set! head n)
             (%node-next-set! n head)
             (%lru-cache-head-set! c n)
-            (%node-value n)
-            )))))
+            (%node-value n)) ))))
 
 (define (lru-cache-set! c k v)
   (let ((old (lookup c k)))
     (if old
         (node-value-set! old v)
-        (let ((new (make-node #f (lru-cache-head c) k v)))
-          (when (>= (lru-cache-size c)
-                    (lru-cache-capacity c))  ; FIXME assert difference is 0
-            (lru-cache-delete! c (node-key (lru-cache-tail c))))
-          (unless (lru-cache-tail c)
-            (lru-cache-tail-set! c new))
-          (when (lru-cache-head c)
-            (node-prev-set! (lru-cache-head c) new))
-          (lru-cache-head-set! c new)
-          (hash-table-set! (lru-cache-ht c) k new)))))
+        (let ((new (make-node #f (%lru-cache-head c) k v)))
+          (when (>= (%lru-cache-size c)
+                    (%lru-cache-capacity c))  ; FIXME assert difference is 0
+            (%lru-cache-delete! c (node-key (%lru-cache-tail c))))
+          (unless (%lru-cache-tail c)
+            (%lru-cache-tail-set! c new))
+          (when (%lru-cache-head c)
+            (node-prev-set! (%lru-cache-head c) new))
+          (%lru-cache-head-set! c new)
+          (hash-table-set! (%lru-cache-ht c) k new)))))
 
 ;; Missing association is not an error.
 (define (lru-cache-delete! c k)
   (and-let* ((n (lookup c k)))
-    (hash-table-delete! (lru-cache-ht c) k)
-    (when (eq? n (lru-cache-tail c))
-      (lru-cache-tail-set! c (node-prev n)))
-    (when (eq? n (lru-cache-head c))
-      (lru-cache-head-set! c (node-next n)))
-    (let ((nx (node-next n))
-          (pr (node-prev n)))
+    (check-%node n)
+    (hash-table-delete! (%lru-cache-ht c) k)
+    (when (eq? n (%lru-cache-tail c))
+      (%lru-cache-tail-set! c (%node-prev n)))
+    (when (eq? n (%lru-cache-head c))
+      (%lru-cache-head-set! c (%node-next n)))
+    (let ((nx (%node-next n))
+          (pr (%node-prev n)))
       (when pr (node-next-set! pr nx))
       (when nx (node-prev-set! nx pr)))
-    (if (lru-cache-deleter c)
-        ((lru-cache-deleter c) k (node-value n))
+    (if (%lru-cache-deleter c)
+        ((%lru-cache-deleter c) k (%node-value n))
         #t)))
 
 (define (lru-cache-size c)
@@ -134,6 +134,7 @@
       ((not n))
     (proc (node-key n) (node-value n))))
 
+;; Should change: walk nodes and finalize as we go
 (define (lru-cache-flush! c)
   (lru-cache-walk c
                   (lambda (k v)
