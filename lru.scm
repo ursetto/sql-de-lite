@@ -40,19 +40,9 @@
   (unsafe unchecked inline)
   prev next key value)
 
-;; (define-record-type-variant (%lru-cache lru-cache)
-;;   (unsafe unchecked inline)
-;;   (%make-lru-cache ht head tail capacity deleter)  ; necessary?
-;;   (%lru-cache? %check-lru-cache)     
-;;   (ht %lru-cache-ht)
-;;   (head %lru-cache-head %lru-cache-head-set!)     
-;;   (tail %lru-cache-tail %lru-cache-tail-set!)
-;;   (capacity %lru-cache-capacity)
-;;   (deleter %lru-cache-deleter))
-
 (define make-lru-cache
   (let ((%make-lru-cache make-lru-cache))
-    (lambda (capacity comparator #!key (on-delete #f))
+    (lambda (capacity comparator #!optional (on-delete #f))
       (let ((ht (make-hash-table comparator)))
         (%make-lru-cache ht #f #f capacity on-delete)))))
 
@@ -129,22 +119,28 @@
 
 ;;   )
 
+;; Call (proc k v) for each key, value in the cache.  Nodes are
+;; traversed from MRU to LRU.
 (define (lru-cache-walk c proc)
   (do ((n (lru-cache-head c) (node-next n)))
       ((not n))
     (proc (node-key n) (node-value n))))
 
-;; Should change: walk nodes and finalize as we go
+;; Delete all nodes in the cache C. The deleter (if provided) is run
+;; for each node as the node list is traversed from head to tail.  If
+;; an error occurs in the deleter, the offending node will be left at
+;; the head of the cache.
 (define (lru-cache-flush! c)
-  (lru-cache-walk c
-                  (lambda (k v)
-                    ((lru-cache-deleter c) k v)))
-  (let ((ht (lru-cache-ht c)))
-    (lru-cache-ht-set! c (make-hash-table (lru-cache-capacity c)
-                                          (hash-table-equivalence-function ht)))
+  (let ((del (lru-cache-deleter c))
+        (ht (lru-cache-ht c)))
+    (do ((n (lru-cache-head c) (node-next n)))
+        ((not n))
+      (lru-cache-head-set! c n)
+      (and del
+           (del (node-key n) (node-value n)))
+      (hash-table-delete! ht (node-key n)))
     (lru-cache-head-set! c #f)
     (lru-cache-tail-set! c #f)))
-
 
 #|
 
