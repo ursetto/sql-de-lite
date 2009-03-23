@@ -1,7 +1,5 @@
 (use srfi-69)
 
-;; FIXME: accessors must be updated to silently fail when cache capacity
-;; is 0.
 ;; Optional: accept #t for size; in this case, act as a plain hash table.
 
 (declare
