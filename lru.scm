@@ -56,10 +56,10 @@
 (define (lru-cache-ref c k)
   (and-let* ((n (lookup c k)))
     (check-%node n)
-    (if (not (%node-prev n))             ; mru
+    (if (not (%node-prev n))             ; MRU
         (%node-value n)
-        (let ((nx (%node-next n))   ; next
-              (pr (%node-prev n)))  ; prev
+        (let ((nx (%node-next n))
+              (pr (%node-prev n)))
           (when pr
             (check-%node pr)
             (%node-next-set! pr nx)
