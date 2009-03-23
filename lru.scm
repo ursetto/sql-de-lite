@@ -36,8 +36,8 @@
   (unsafe unchecked inline)
   ht head tail capacity deleter)
 
-(define-record node prev next key value)
-(define-record-variant (%node node)
+(define-record lru-node prev next key value)  ; avoid record name conflict
+(define-record-variant (%node lru-node)
   (unsafe unchecked inline)
   prev next key value)
 
@@ -80,15 +80,15 @@
 (define (lru-cache-set! c k v)
   (let ((old (lookup c k)))
     (if old
-        (node-value-set! old v)
+        (lru-node-value-set! old v)
         (let ((new (make-%node #f (%lru-cache-head c) k v)))
           (when (>= (%lru-cache-size c)
                     (%lru-cache-capacity c))  ; FIXME assert difference is 0
-            (lru-cache-delete! c (node-key (%lru-cache-tail c))))
+            (lru-cache-delete! c (lru-node-key (%lru-cache-tail c))))
           (unless (%lru-cache-tail c)
             (%lru-cache-tail-set! c new))
           (when (%lru-cache-head c)
-            (node-prev-set! (%lru-cache-head c) new))
+            (lru-node-prev-set! (%lru-cache-head c) new))
           (%lru-cache-head-set! c new)
           (hash-table-set! (%lru-cache-ht c) k new)))))
 
@@ -103,8 +103,8 @@
       (%lru-cache-head-set! c (%node-next n)))
     (let ((nx (%node-next n))
           (pr (%node-prev n)))
-      (when pr (node-next-set! pr nx))
-      (when nx (node-prev-set! nx pr)))
+      (when pr (lru-node-next-set! pr nx))
+      (when nx (lru-node-prev-set! nx pr)))
     (if (%lru-cache-deleter c)
         ((%lru-cache-deleter c) k (%node-value n))
         #t)))
@@ -114,15 +114,15 @@
              (xs knil))
     (if (not x)
         xs
-        (loop (node-next x)
-              (kons (node-key x) (node-value x) xs)))))
+        (loop (lru-node-next x)
+              (kons (lru-node-key x) (lru-node-value x) xs)))))
 
 ;; Call (proc k v) for each key, value in the cache.  Nodes are
 ;; traversed from MRU to LRU.
 (define (lru-cache-walk c proc)
-  (do ((n (lru-cache-head c) (node-next n)))
+  (do ((n (lru-cache-head c) (lru-node-next n)))
       ((not n))
-    (proc (node-key n) (node-value n))))
+    (proc (lru-node-key n) (lru-node-value n))))
 
 ;; Delete all nodes in the cache C. The deleter (if provided) is run
 ;; for each node as the node list is traversed from head to tail.  If
@@ -131,12 +131,12 @@
 (define (lru-cache-flush! c)
   (let ((del (lru-cache-deleter c))
         (ht (lru-cache-ht c)))
-    (do ((n (lru-cache-head c) (node-next n)))
+    (do ((n (lru-cache-head c) (lru-node-next n)))
         ((not n))
       (lru-cache-head-set! c n)
       (and del
-           (del (node-key n) (node-value n)))
-      (hash-table-delete! ht (node-key n)))
+           (del (lru-node-key n) (lru-node-value n)))
+      (hash-table-delete! ht (lru-node-key n)))
     (lru-cache-head-set! c #f)
     (lru-cache-tail-set! c #f)))
 
