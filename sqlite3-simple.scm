@@ -212,8 +212,10 @@ int busy_notification_handler(void *ctx, int times) {
              (or (sqlite-database-ptr db)
                  "(closed)")
              (sqlite-database-filename db)))
+
   ;; Looks up the prepared statement in the statement cache; if not
-  ;; found, it prepares a statement and adds it to the cache.
+  ;; found, it prepares a statement and adds it to the cache.  Statements
+  ;; are also marked as cached, so FINALIZE is a no-op.
   (define (prepare db sql)
     (let ((c (sqlite-database-statement-cache db)))
       (or (lru-cache-ref c sql)
@@ -287,7 +289,6 @@ int busy_notification_handler(void *ctx, int times) {
         ((row)  (loop))
         ((done) 'done)  ; stmt?
         (else #f))))
-
 
   ;; Finalize generally only returns an error if statement execution
   ;; failed; we don't need that here.  However, it can return
