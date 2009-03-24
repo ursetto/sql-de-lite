@@ -40,7 +40,6 @@ int busy_notification_handler(void *ctx, int times) {
    execute execute-sql
    fetch fetch-alist
    fetch-all ; ?
-   raise-database-errors
    raise-database-error
    finalize step  ; step-through
    column-count column-name column-type column-data
@@ -56,13 +55,17 @@ int busy_notification_handler(void *ctx, int times) {
    autocommit?
    rollback commit
 
-   set-busy-timeout! set-busy-handler! busy-timeout-handler 
+   set-busy-handler! busy-timeout
    retry-busy? reset-busy! ; internal
    with-query first-row query
 
    ;; syntax
    let-prepare
 
+   ;; parameters
+   raise-database-errors
+   prepared-cache-size
+   
    ;; debugging
    int->status status->int             
                 
@@ -77,6 +80,7 @@ int busy_notification_handler(void *ctx, int times) {
   (import (only srfi-18 thread-sleep! milliseconds->time))
   (import foreign foreigners easyffi)
   (require-extension matchable)
+  (require-extension lru-cache)
 
 #>? #include "sqlite3-api.h" <#
   
@@ -133,6 +137,7 @@ int busy_notification_handler(void *ctx, int times) {
   (define library-version (foreign-value "sqlite3_version" c-string))
   
   (define raise-database-errors (make-parameter #t))
+  (define prepared-cache-size (make-parameter 100))
 
   (define (execute-sql db sql . params)
     (and-let* ((s (prepare db sql)))
@@ -190,7 +195,8 @@ int busy_notification_handler(void *ctx, int times) {
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
              (sqlite-statement-sql s)))
-  (define-record sqlite-database ptr filename invoked-busy-handler?)
+  (define-record sqlite-database ptr filename busy-handler
+    invoked-busy-handler? statement-cache)
   (define-inline (nonnull-sqlite-database-ptr db)
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
@@ -204,10 +210,24 @@ int busy_notification_handler(void *ctx, int times) {
              (or (sqlite-database-ptr db)
                  "(closed)")
              (sqlite-database-filename db)))
+  ;; Looks up the prepared statement in the statement cache; if not
+  ;; found, it prepares a statement and adds it to the cache.
+  ;; Don't manually finalize a cached statement as it will become invalid.
+  ;; (Alternative behaviors: we can re-prepare a finalized statement we
+  ;;  find in the cache, or have FINALIZE delete it from the cache.
+  ;;  Consider FINALIZE may be required when cache size is 0 to avoid
+  ;;  resource exhaustion, yet we don't normally want to call it.
+  ;;  If the cache is active, perhaps FINALIZE is a no-op.)
+  (define (prepare db sql)
+    (let ((c (sqlite-database-statement-cache db)))
+      (or (lru-cache-ref c sql)
+          (and-let* ((s (prepare/transient db sql)))
+            (lru-cache-set! c sql s)
+            s))))
   ;; May return #f even on SQLITE_OK, which means the statement contained
   ;; only whitespace and comments and nothing was compiled.
   ;; BUSY may occur here.
-  (define (prepare db sql)
+  (define (prepare/transient db sql)
     (let-location ((stmt (c-pointer "sqlite3_stmt")))
       (let retry ((times 0))
         (reset-busy! db)
@@ -224,7 +244,7 @@ int busy_notification_handler(void *ctx, int times) {
                        (make-sqlite-statement stmt sql db ncol names nparam))
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
-                 (let ((bh (busy-handler)))
+                 (let ((bh (sqlite-database-busy-handler db)))
                    (if (and bh
                             (retry-busy? db)
                             (bh db times))
@@ -245,7 +265,7 @@ int busy_notification_handler(void *ctx, int times) {
                  (error 'step "misuse of interface"))
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
-                 (let ((bh (busy-handler)))
+                 (let ((bh (sqlite-database-busy-handler db)))
                    (if (and bh
                             (retry-busy? db)
                             (bh db times))
@@ -404,9 +424,16 @@ int busy_notification_handler(void *ctx, int times) {
     (let-location ((db-ptr (c-pointer "sqlite3")))
       (let* ((rv (sqlite3_open filename (location db-ptr))))
         (if (eqv? rv status/ok)
-            (make-sqlite-database db-ptr filename (object-evict (vector #f)))
+            (make-sqlite-database db-ptr
+                                  filename
+                                  #f                         ; busy-handler
+                                  (object-evict (vector #f)) ; invoked-busy?
+                                  (make-lru-cache (prepared-cache-size)
+                                                  string=?
+                                                  (lambda (sql stmt)
+                                                    (finalize stmt))))
             (if db-ptr
-                (database-error (make-sqlite-database db-ptr filename #f)
+                (database-error (make-sqlite-database db-ptr filename #f #f)
                                 'open-database filename)
                 (error 'open-database "internal error: out of memory"))))))
 
@@ -544,9 +571,8 @@ int busy_notification_handler(void *ctx, int times) {
     (vector-ref (sqlite-database-invoked-busy-handler? db) 0))
   (define (reset-busy! db)
     (vector-set! (sqlite-database-invoked-busy-handler? db) 0 #f))
-  (define busy-handler (make-parameter #f))
   (define (set-busy-handler! db proc)
-    (busy-handler proc)
+    (sqlite-database-busy-handler-set! db proc)
     (if proc
         (sqlite3_busy_handler (nonnull-sqlite-database-ptr db)
                               (foreign-value "busy_notification_handler"
@@ -555,33 +581,35 @@ int busy_notification_handler(void *ctx, int times) {
                                (sqlite-database-invoked-busy-handler? db)))
         (sqlite3_busy_handler (nonnull-sqlite-database-ptr db) #f #f))
     (void))
-  (define busy-timeout (make-parameter 0))
-  (define (set-busy-timeout! db ms)
-    (busy-timeout ms)
-    (if (= ms 0)
-        (set-busy-handler! db #f)
-        (set-busy-handler! db busy-timeout-handler)))
   (define (thread-sleep!/ms ms)
     (thread-sleep!
      (milliseconds->time (+ ms (current-milliseconds)))))
-  (define busy-timeout-handler
+  ;; (busy-timeout ms) returns a procedure suitable for use in
+  ;; set-busy-handler!, implementing a spinning busy timeout using the
+  ;; SQLite3 busy algorithm.  Other threads may be scheduled while
+  ;; this one is busy-waiting.
+  (define busy-timeout
     (let* ((delays '#(1 2 5 10 15 20 25 25  25  50  50 100))
            (totals '#(0 1 3  8 18 33 53 78 103 128 178 228))
            (ndelay (vector-length delays)))
-      (lambda (db count)
-        (let* ((timeout (busy-timeout))
-               (delay (vector-ref delays (min count (- ndelay 1))))
-               (prior (if (< count ndelay)
-                          (vector-ref totals count)
-                          (+ (vector-ref totals (- ndelay 1))
-                             (* delay (- count (- ndelay 1)))))))
-          (let ((delay (if (> (+ prior delay) timeout)
-                           (- timeout prior)
-                           delay)))
-            (cond ((<= delay 0) #f)
-                  (else
-                   (thread-sleep!/ms delay)
-                   #t)))))))
+      (lambda (ms)
+        (cond
+         ((< ms 0) (error 'busy-timeout "timeout must be non-negative" ms))
+         ((= ms 0) #f)
+         (else
+          (lambda (db count)
+            (let* ((delay (vector-ref delays (min count (- ndelay 1))))
+                   (prior (if (< count ndelay)
+                              (vector-ref totals count)
+                              (+ (vector-ref totals (- ndelay 1))
+                                 (* delay (- count (- ndelay 1)))))))
+              (let ((delay (if (> (+ prior delay) ms)
+                               (- ms prior)
+                               delay)))
+                (cond ((<= delay 0) #f)
+                      (else
+                       (thread-sleep!/ms delay)
+                       #t))))))))))
 
   (define-syntax let-prepare
     (syntax-rules ()
