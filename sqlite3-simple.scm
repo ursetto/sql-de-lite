@@ -190,8 +190,10 @@ int busy_notification_handler(void *ctx, int times) {
 ;;              (() (error "no such key" k))))
 ;;     (finalize! st))
 
+  ;; cached?: whether this statement has been cached (is non-transient).
+  ;;          Stored as a flag to avoid looking up the SQL in the cache.
   (define-record sqlite-statement ptr sql db
-    column-count column-names parameter-count)
+    column-count column-names parameter-count cached?)
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
              (sqlite-statement-sql s)))
@@ -212,18 +214,20 @@ int busy_notification_handler(void *ctx, int times) {
              (sqlite-database-filename db)))
   ;; Looks up the prepared statement in the statement cache; if not
   ;; found, it prepares a statement and adds it to the cache.
-  ;; Don't manually finalize a cached statement as it will become invalid.
-  ;; (Alternative behaviors: we can re-prepare a finalized statement we
-  ;;  find in the cache, or have FINALIZE delete it from the cache.
-  ;;  Consider FINALIZE may be required when cache size is 0 to avoid
-  ;;  resource exhaustion, yet we don't normally want to call it.
-  ;;  If the cache is active, perhaps FINALIZE is a no-op.)
   (define (prepare db sql)
     (let ((c (sqlite-database-statement-cache db)))
       (or (lru-cache-ref c sql)
           (and-let* ((s (prepare-transient db sql)))
-            (lru-cache-set! c sql s)
+            (when (> (lru-cache-capacity c) 0)
+              (lru-cache-set! c sql s)
+              (sqlite-statement-cached?-set! s #t))
             s))))
+  ;; It might make sense to manually bypass the cache if you are creating
+  ;; a statement which will definitely only be used once, especially a
+  ;; dynamically generated one.  If you create a lot of these, transience
+  ;; may prevent bumping a more important statement out of the cache
+  ;; and having to re-prepare it.
+  ;; --
   ;; May return #f even on SQLITE_OK, which means the statement contained
   ;; only whitespace and comments and nothing was compiled.
   ;; BUSY may occur here.
@@ -241,7 +245,10 @@ int busy_notification_handler(void *ctx, int times) {
                      (let* ((ncol (sqlite3_column_count stmt))
                             (nparam (sqlite3_bind_parameter_count stmt))
                             (names (make-vector ncol #f)))
-                       (make-sqlite-statement stmt sql db ncol names nparam))
+                       (make-sqlite-statement stmt sql db
+                                              ncol names nparam
+                                              #f ; cached
+                                              ))
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
                  (let ((bh (sqlite-database-busy-handler db)))
@@ -287,13 +294,15 @@ int busy_notification_handler(void *ctx, int times) {
   ;; status/abort if the VM is interrupted, or status/misuse.  We
   ;; always disable our statement, return #t for all errors except for
   ;; abort or misuse, and throw those.
-  
-  ;;   Finalizing a finalized statement is a no-op.  Finalizing a
-  ;;   finalized statement on a closed DB is also a no-op; it is
-  ;;   explicitly checked for here [*], but if we move to tracking
-  ;;   pending statements at the application level it will become
-  ;;   automatic.
+
+  ;; Finalizing a finalized statement or a cached statement is a
+  ;; no-op.  Finalizing a statement on a closed DB is also a
+  ;; no-op; it is explicitly checked for here [*], although normally
+  ;; the cache prevents this issue.
   (define (finalize stmt)
+    (or (sqlite-statement-cached? stmt)
+        (finalize-transient stmt)))
+  (define (finalize-transient stmt)      ; internal
     (or (not (sqlite-statement-ptr stmt))
         (not (sqlite-database-ptr (sqlite-statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
@@ -431,7 +440,7 @@ int busy_notification_handler(void *ctx, int times) {
                                   (make-lru-cache (prepared-cache-size)
                                                   string=?
                                                   (lambda (sql stmt)
-                                                    (finalize stmt))))
+                                                    (finalize-transient stmt))))
             (if db-ptr
                 (database-error (make-sqlite-database db-ptr filename #f #f #f)
                                 'open-database filename)
