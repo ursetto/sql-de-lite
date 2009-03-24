@@ -156,11 +156,43 @@ int busy_notification_handler(void *ctx, int times) {
          (if (> (column-count stmt) 0)
              stmt  ; hmmm
              (and (step-through stmt)
-                  (finalize stmt)
+                  (finalize stmt)       ; hah, this is wrong
                   (change-count (sqlite-statement-db stmt))))
          ;; if returned columns = 0, step through, finalize and return # changes
          ;; otherwise, done (nb. cannot return 0 if step has not yet occurred!!)
          ))
+
+  (define (finalized? stmt)
+    (or (sqlite-statement-ptr stmt)))
+  (define (query db sql #!optional (proc #f))
+    (let ((s #f))
+      ;; We -might- be able to analyze parameter binding here if
+      ;; we were to prepare the statement immediately.
+      (lambda args
+        (when (or (not s)
+                  (finalized? s))        ; stale statement
+          (set! s (prepare db sql)))
+        (apply bind-some-parameters s 1 args)
+        (cond (proc
+               (let ((c (current-exception-handler)))
+                 (begin0
+                     (with-exception-handler
+                      (lambda (ex) (reset s) (c ex))
+                      (lambda () (proc s)))
+                   (reset s))))
+              (else
+               ;; Results are ignored; step once and reset.  If single step
+               ;; throws an error, that's okay, as reset will not be
+               ;; required (AFAIK).  That saves exception handling overhead.
+               ;; If we had null proc return the first row when column-count>0,
+               ;; we might be able to get away with ignoring exception
+               ;; handling there too, at the cost of a disparity in query
+               ;; return results.  Though we could return #changes as a
+               ;; virtual column value--(3) instead of 3--or require the
+               ;; user call change-count manually.
+               (and (step s)
+                    (reset s)
+                    (change-count (sqlite-statement-db s))))))))
   
   ;; returns #f on failure, '() on done, '(col1 col2 ...) on success
   ;; note: "SQL statement" is uncompiled text;
@@ -189,6 +221,11 @@ int busy_notification_handler(void *ctx, int times) {
 ;;              ((k v) (print (list k v)))
 ;;              (() (error "no such key" k))))
 ;;     (finalize! st))
+
+  ;; (let ((q (query db "select k, v from cache where k = ?;")))
+  ;;  (do ((i 0 (+ i 1)))
+  ;;      ((> i 100))
+  ;;    (print (q i)))
 
   ;; cached?: whether this statement has been cached (is non-transient).
   ;;          Stored as a flag to avoid looking up the SQL in the cache.
@@ -640,10 +677,11 @@ int busy_notification_handler(void *ctx, int times) {
                 thunk)))
         (reset stmt)
         rv)))
-  (define-syntax query
-    (syntax-rules ()
-      ((query statement e0 e1 ...)
-       (with-query statement (lambda () e0 e1 ...)))))
+;;   (define-syntax query
+;;     (syntax-rules ()
+;;       ((query statement e0 e1 ...)
+;;        (with-query statement (lambda () e0 e1 ...)))))
+  
   ;; might not be necessary with nicer syntax for with-query --
   ;; e.g. (with-query s fetch) or (query s (fetch s))
   ;; but we -could- avoid introducing an exception thunk
@@ -692,7 +730,12 @@ int busy_notification_handler(void *ctx, int times) {
 ;; a protected environment.
 
 ;; (execute ((sql db "select * from cache where k = ?;") 1)
-;;   (lambda ()
-;;     (fetch)))
+;;          (lambda (s) (fetch s)))
 
-;; (execute (sql db "
+;; ((query db "select * from cache where k = ?" fetch-all) 1)
+;; (let ((q (query db "select * from cache where k = ?" fetch)))
+;;   (q 2)  ; -> (2 3)
+;;   (q 1))  ; -> (1 2)
+
+;; ((query db "insert into cache(k,v) values(?,?)") 1 2)
+;; (update db "insert into cache(k,v) values(?,?)" 1 2)    ; shorthand

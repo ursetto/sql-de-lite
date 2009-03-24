@@ -123,12 +123,19 @@
 ;;           (query (execute-sql db "select 1, 2 union select 3, 4;")
 ;;                  (fetch s)))))
 
-(test "query/fetch first row via (query s (fetch s))"
-      '(1 2)
-      (call-with-database ":memory:"
-        (lambda (db)
-          (let-prepare db ((s "select 1, 2 union select 3, 4;"))
-            (query s (fetch s))))))
+;; (test "query/fetch first row via (query s (fetch s))"
+;;       '(1 2)
+;;       (call-with-database ":memory:"
+;;         (lambda (db)
+;;           (let-prepare db ((s "select 1, 2 union select 3, 4;"))
+;;             (query s (fetch s))))))
+
+;; (test "query/fetch first row via (query fetch)"
+;;       '(1 2)
+;;       (call-with-database ":memory:"
+;;         (lambda (db)
+;;           (let ((q (query db "select 1, 2 union select 3, 4;" fetch)))
+;;             (q)))))
 
 (test "query/fetch first row via first-row"
       '(1 2)
