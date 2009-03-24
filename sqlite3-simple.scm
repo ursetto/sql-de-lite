@@ -36,7 +36,7 @@ int busy_notification_handler(void *ctx, int times) {
    ;; API
    error-code error-message
    open-database close-database
-   prepare
+   prepare prepare-transient
    execute execute-sql
    fetch fetch-alist
    fetch-all ; ?
@@ -195,8 +195,8 @@ int busy_notification_handler(void *ctx, int times) {
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
              (sqlite-statement-sql s)))
-  (define-record sqlite-database ptr filename busy-handler
-    invoked-busy-handler? statement-cache)
+  (define-record sqlite-database
+    ptr filename busy-handler invoked-busy-handler? statement-cache)
   (define-inline (nonnull-sqlite-database-ptr db)
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
@@ -221,13 +221,13 @@ int busy_notification_handler(void *ctx, int times) {
   (define (prepare db sql)
     (let ((c (sqlite-database-statement-cache db)))
       (or (lru-cache-ref c sql)
-          (and-let* ((s (prepare/transient db sql)))
+          (and-let* ((s (prepare-transient db sql)))
             (lru-cache-set! c sql s)
             s))))
   ;; May return #f even on SQLITE_OK, which means the statement contained
   ;; only whitespace and comments and nothing was compiled.
   ;; BUSY may occur here.
-  (define (prepare/transient db sql)
+  (define (prepare-transient db sql)
     (let-location ((stmt (c-pointer "sqlite3_stmt")))
       (let retry ((times 0))
         (reset-busy! db)
@@ -433,7 +433,7 @@ int busy_notification_handler(void *ctx, int times) {
                                                   (lambda (sql stmt)
                                                     (finalize stmt))))
             (if db-ptr
-                (database-error (make-sqlite-database db-ptr filename #f #f)
+                (database-error (make-sqlite-database db-ptr filename #f #f #f)
                                 'open-database filename)
                 (error 'open-database "internal error: out of memory"))))))
 
@@ -454,6 +454,7 @@ int busy_notification_handler(void *ctx, int times) {
 
   (define (close-database db)
     (let ((db-ptr (nonnull-sqlite-database-ptr db)))
+      (lru-cache-flush! (sqlite-database-statement-cache db))
       (do ((stmt (sqlite3_next_stmt db-ptr #f) ; finalize pending statements
                  (sqlite3_next_stmt db-ptr stmt)))
           ((not stmt))

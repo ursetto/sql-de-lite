@@ -60,11 +60,17 @@
      (time (repeat  135000 (prepare/cached db "select * from cache;")))
      ;; prepare statement where schema must be checked (small schema)
      (time (repeat   31000
-                     (finalize (prepare db "select * from cache;"))))
+                     (finalize (prepare-transient db "select * from cache;"))))
      ;; prepare statement not requiring schema
      (time (repeat   47000
-                     (finalize (prepare db "select 1;"))))
-
+                     (finalize (prepare-transient db "select 1;"))))
+     ;; cached prepare statement where schema must be checked (small schema)
+     (time (repeat  800000
+                     (prepare db "select * from cache;")))
+     ;; cached prepare statement not requiring schema
+     (time (repeat  850000
+                     (prepare db "select 1;")))
+     
 ;;; rerun for hash cache
 
      (print ":::::::::::::::::::::")
@@ -92,6 +98,13 @@
                     (prepare/cached/lru db (if (fx= (fxand i 1) 1)
                                                "select 0;"
                                                "select 1;"))))   
+     (print "-- alternate between two statements, native egg cache")
+     (time (dotimes (i 700000)
+                    (prepare db (if (fx= (fxand i 1) 1)
+                                    "select 0;"
+                                    "select 1;"))))   
+
+
      (lru-cache-flush! lru-cache)
      
      )
