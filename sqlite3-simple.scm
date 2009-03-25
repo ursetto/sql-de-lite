@@ -45,7 +45,10 @@ int busy_notification_handler(void *ctx, int times) {
 
    set-busy-handler! busy-timeout
    retry-busy? reset-busy! ; internal
-   with-query first-row query
+   with-query first-row
+
+   ;; advanced interface
+   query exec
 
    ;; syntax
    let-prepare
@@ -167,6 +170,7 @@ int busy_notification_handler(void *ctx, int times) {
         (when (or (not s)
                   (finalized? s))        ; stale statement
           (set! s (prepare db sql)))
+        ;; If statement was cached, prepare has already reset it.
         (and
          (apply bind-parameters s args)
          (cond (proc
@@ -177,24 +181,23 @@ int busy_notification_handler(void *ctx, int times) {
                        (lambda () (proc s)))
                     (reset s))))
                (else
-                ;; Results are ignored; step once and reset.  If single step
-                ;; throws an error, that's okay, as reset will not be
-                ;; required (AFAIK).  That saves exception handling overhead.
-                ;; If we had null proc return the first row when column-count>0,
-                ;; we might be able to get away with ignoring exception
-                ;; handling there too, at the cost of a disparity in query
-                ;; return results.  Though we could return #changes as a
-                ;; virtual column value--(3) instead of 3--or require the
-                ;; user call change-count manually.
-                (and (step s)
-                     (reset s)
-                     (change-count (sqlite-statement-db s)))))))))
-  (define (update db sql . args)
-    ;; (update db "insert into cache(k,v) values(?,?);" 1 2) ;=> #changes
+                ;; Results are ignored; step once.  Statement will be reset
+                ;; in (step) if an error occurs; we reset it here if a result
+                ;; row was returned.
+                (and-let* ((v (fetch s)))
+                  (when (pair? v) (reset s))
+                  (cond ((> (column-count s) 0)
+                         v)
+                        (else
+                         (change-count db))))))))))
+  (define (exec db sql . args)
+    ;; (exec db "insert into cache(k,v) values(?,?);" 1 2) ;=> #changes
     (let ((s (prepare db sql)))
       (and (apply bind-parameters s args)
-           (step s)
-           ;;(reset s)
+           (and-let* ((v (step s)))
+             (if (eq? v 'row)
+                 (reset s)
+                 #t))
            (finalize s)
            (change-count (sqlite-statement-db s)))))
   
@@ -254,12 +257,14 @@ int busy_notification_handler(void *ctx, int times) {
                  "(closed)")
              (sqlite-database-filename db)))
 
-  ;; Looks up the prepared statement in the statement cache; if not
-  ;; found, it prepares a statement and adds it to the cache.  Statements
-  ;; are also marked as cached, so FINALIZE is a no-op.
+  ;; Looks up a prepared statement in the statement cache.  If
+  ;; found, the statement is reset and returned; if not found, it
+  ;; prepares a statement and caches it.  Statements are also marked
+  ;; as cached, so FINALIZE is a no-op.
   (define (prepare db sql)
     (let ((c (sqlite-database-statement-cache db)))
-      (or (lru-cache-ref c sql)
+      (or (and-let* ((s (lru-cache-ref c sql)))
+            (reset s))
           (and-let* ((s (prepare-transient db sql)))
             (when (> (lru-cache-capacity c) 0)
               (lru-cache-set! c sql s)
@@ -303,7 +308,13 @@ int busy_notification_handler(void *ctx, int times) {
                 (else
                  (database-error db 'prepare sql)))))))
 
-  ;; return #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE
+  ;; Returns #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE.
+  ;; On error, statement is reset.  However, statement is not
+  ;; currently reset on busy.  Oddly, one of the benefits of
+  ;; resetting on error is a more descriptive error message; although
+  ;; step() returns result codes directly with prepare_v2(), it still
+  ;; takes a reset to convert "constraint failed" into "column key is
+  ;; not unique".
   (define (step stmt)
     (let ((db (sqlite-statement-db stmt)))
       (let retry ((times 0))
@@ -312,6 +323,7 @@ int busy_notification_handler(void *ctx, int times) {
           (cond ((= rv status/row) 'row)
                 ((= rv status/done) 'done)
                 ((= rv status/misuse) ;; Error code/msg may not be set! :(
+                 (reset stmt)
                  (error 'step "misuse of interface"))
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
@@ -322,6 +334,7 @@ int busy_notification_handler(void *ctx, int times) {
                        (retry (+ times 1))
                        (database-error db 'step stmt))))
                 (else
+                 (reset stmt)
                  (database-error db 'step stmt)))))))
 
   (define (step-through stmt)
@@ -470,7 +483,10 @@ int busy_notification_handler(void *ctx, int times) {
   ;; If errors are off, user can't retrieve error message as we
   ;; return #f instead of db; though it's probably SQLITE_CANTOPEN.
   ;; Perhaps this should always throw an error.
-  ;; NULL (#f) filename allowed, creates private on-disk database.  
+  ;; NULL (#f) filename allowed, creates private on-disk database,
+  ;; same as "".
+  ;; FIXME Should allow symbols 'memory => ":memory:" and 'temp => ""
+  ;; as filename.
   (define (open-database filename)
     (let-location ((db-ptr (c-pointer "sqlite3")))
       (let* ((rv (sqlite3_open filename (location db-ptr))))
@@ -583,13 +599,13 @@ int busy_notification_handler(void *ctx, int times) {
     (cond ((autocommit? db) #t)
           (else
            (reset-running-queries! db)
-           (execute-sql db "rollback;"))))
+           (exec db "rollback;"))))
   ;; Same behavior as rollback.
   (define (commit db)
     (cond ((autocommit? db) #t)
           (else
            (reset-running-queries! db)
-           (execute-sql db "commit;"))))
+           (exec db "commit;"))))
   (define (reset-running-queries! db)
     (let ((db-ptr (nonnull-sqlite-database-ptr db)))
       (do ((stmt (sqlite3_next_stmt db-ptr #f)
