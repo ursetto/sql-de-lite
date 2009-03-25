@@ -1,19 +1,7 @@
 ;; pysqlite bench at http://oss.itsystementwicklung.de/trac/pysqlite/wiki/PysqliteTwoBenchmarks
 
-;; A running read query will block writers; if not wrapped in a transaction,
-;; this query will not be reset on error and writers will be blocked until
-;; it is finalized.  let-prepare will not finalize on error; normally you
-;; rely on call-with-database to close the database and finalize everything
-;; pending.  However, if your program continues, statements will be open!!
-;; a) perhaps STEP should reset on any sqlite error
-;; b) this doesn't help if a non-sqlite error is thrown; what you would
-;;    essentially need is a with-query or cursor
-;; We cannot run destructors on an object immediately when it goes out
-;; of scope; we have to introduce a new scope.  Therefore we can't rely on
-;; cursor destruction to reset statement, so cursors don't solve the problem.
-
-;; Does this type of query (read/write) need to be stepped multiple times
-;; or reset to release a read lock?
+;; This type of query (read/write) need only be stepped once, after
+;; which it will return DONE.
 ;;  INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;
 
 
@@ -139,6 +127,10 @@ int busy_notification_handler(void *ctx, int times) {
   (define raise-database-errors (make-parameter #t))
   (define prepared-cache-size (make-parameter 100))
 
+  (define-syntax begin0   ; multiple values discarded
+    (syntax-rules () ((_ e0 e1 ...)
+                      (let ((tmp e0)) e1 ... tmp))))
+
   (define (execute-sql db sql . params)
     (and-let* ((s (prepare db sql)))
       (apply execute s params)))
@@ -164,6 +156,9 @@ int busy_notification_handler(void *ctx, int times) {
 
   (define (finalized? stmt)
     (or (sqlite-statement-ptr stmt)))
+  ;; Statement is not finalized, because query can be invoked
+  ;; multiple times and we don't want to revivify the statement
+  ;; every time (if the cache is off).
   (define (query db sql #!optional (proc #f))
     (let ((s #f))
       ;; We -might- be able to analyze parameter binding here if
@@ -172,27 +167,36 @@ int busy_notification_handler(void *ctx, int times) {
         (when (or (not s)
                   (finalized? s))        ; stale statement
           (set! s (prepare db sql)))
-        (apply bind-some-parameters s 1 args)
-        (cond (proc
-               (let ((c (current-exception-handler)))
-                 (begin0
-                     (with-exception-handler
-                      (lambda (ex) (reset s) (c ex))
-                      (lambda () (proc s)))
-                   (reset s))))
-              (else
-               ;; Results are ignored; step once and reset.  If single step
-               ;; throws an error, that's okay, as reset will not be
-               ;; required (AFAIK).  That saves exception handling overhead.
-               ;; If we had null proc return the first row when column-count>0,
-               ;; we might be able to get away with ignoring exception
-               ;; handling there too, at the cost of a disparity in query
-               ;; return results.  Though we could return #changes as a
-               ;; virtual column value--(3) instead of 3--or require the
-               ;; user call change-count manually.
-               (and (step s)
-                    (reset s)
-                    (change-count (sqlite-statement-db s))))))))
+        (and
+         (apply bind-parameters s args)
+         (cond (proc
+                (let ((c (current-exception-handler)))
+                  (begin0
+                      (with-exception-handler
+                       (lambda (ex) (reset s) (c ex))
+                       (lambda () (proc s)))
+                    (reset s))))
+               (else
+                ;; Results are ignored; step once and reset.  If single step
+                ;; throws an error, that's okay, as reset will not be
+                ;; required (AFAIK).  That saves exception handling overhead.
+                ;; If we had null proc return the first row when column-count>0,
+                ;; we might be able to get away with ignoring exception
+                ;; handling there too, at the cost of a disparity in query
+                ;; return results.  Though we could return #changes as a
+                ;; virtual column value--(3) instead of 3--or require the
+                ;; user call change-count manually.
+                (and (step s)
+                     (reset s)
+                     (change-count (sqlite-statement-db s)))))))))
+  (define (update db sql . args)
+    ;; (update db "insert into cache(k,v) values(?,?);" 1 2) ;=> #changes
+    (let ((s (prepare db sql)))
+      (and (apply bind-parameters s args)
+           (step s)
+           ;;(reset s)
+           (finalize s)
+           (change-count (sqlite-statement-db s)))))
   
   ;; returns #f on failure, '() on done, '(col1 col2 ...) on success
   ;; note: "SQL statement" is uncompiled text;
@@ -514,9 +518,6 @@ int busy_notification_handler(void *ctx, int times) {
              #t)
             (else #f))))
 
-  (define-syntax begin0   ; multiple values discarded
-    (syntax-rules () ((_ e0 e1 ...)
-                      (let ((tmp e0)) e1 ... tmp))))
   (define (call-with-prepared-statement db sql proc)
     (let ((stmt (prepare db sql)))
       (begin0 (proc stmt)                     ; ignore exceptions

@@ -254,6 +254,17 @@
       (call-with-database ":memory:"
         (lambda (db) (commit db))))
 
+(test "insert ... select executes in one step"
+      '((3 4) (5 6))
+      (call-with-database ":memory:"
+        (lambda (db)
+          (execute-sql db "create table a(k,v);")
+          (execute-sql db "create table b(k,v);")
+          (execute-sql db "insert into a values(3,4);")
+          (execute-sql db "insert into a values(5,6);")
+          (step (prepare db "insert into b select * from a;"))  ; the test
+          (fetch-all (prepare db "select * from b;")))))
+
 (test-group
  "large integers"
  ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
