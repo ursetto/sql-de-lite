@@ -265,6 +265,15 @@
           (step (prepare db "insert into b select * from a;"))  ; the test
           (fetch-all (prepare db "select * from b;")))))
 
+(test "cached statement may be exec'ed multiple times"
+      0
+      (call-with-database ":memory:"
+          (lambda (db)
+            (exec db "create table a(k primary key, v);")
+            (exec db "insert into a values(?,?)" "foo" "bar")      
+            (exec db "insert or ignore into a values(?,?)" "foo" "bar")
+            (exec db "insert or ignore into a values(?,?)" "foo" "bar"))))
+
 (test-group
  "large integers"
  ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
