@@ -274,6 +274,9 @@
             (exec db "insert or ignore into a values(?,?)" "foo" "bar")
             (exec db "insert or ignore into a values(?,?)" "foo" "bar"))))
 
+;; Should throw a invalid argument type error, but we can't test that yet
+;; ((query db "select * from cache where key = ?;") column-names)
+
 (test-group
  "large integers"
  ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
