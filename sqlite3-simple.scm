@@ -4,6 +4,36 @@
 ;; which it will return DONE.
 ;;  INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;
 
+;; TODO rewrite:
+;; Remove (execute ...).  If low-level interface is desired, user should
+;; use bind and reset.  If high-level interface, use query/exec.  query/exec
+;; will work with prepared statements or (sql ...).  Note: only downside is
+;; that query/exec enforces argument binding; recommendation: create
+;; query*/exec* which do not accept arguments, and allow binding to
+;; be done manually.
+;; --
+;; query/exec should revivify finalized statements, including those
+;; proto-statements created with (sql ...).  If it was transient,
+;; consider putting the new version in the cache, as we needed it
+;; at least twice.
+;; --
+;; Downside 2: If you are running multiple execs or queries against the
+;; same statement, you should save the sql object to a variable.  Otherwise
+;; the query has to look up the statement in the cache and mutate the
+;; sql object every time. If the cache is disabled, a new prepare will be
+;; done each time (same with using (prepare) of course).
+;; This was already a problem with (exec) as it did not accept a statement
+;; object.  NB!! This is bad, because we either have to mutate the
+;; sql object with the cached data, or do a hash lookup every time.
+;; If the user uses the same sql object, only one initial mutation
+;; is required, then that sql object is a valid statement for the rest of the
+;; queries.  If a fresh object is used, then either we must do a cache
+;; lookup each time, or an object mutation.  The same exact problem
+;; will occur with reviving finalized statements.
+;; Possible solution: use shared structure; the (ptr column-count column-names parameter-count cached?) fields would become their own object "X" (maybe just
+;; that piece could be stored in the cache), and the actual statement
+;; object can just hold (db ptr X).  To revivify or grab from cache, only
+;; one mutation would be required, set-X!.
 
 #>  #include <sqlite3.h> <#
 #>
@@ -302,23 +332,6 @@ int busy_notification_handler(void *ctx, int times) {
 
 
 ;;; Record definitions
-  
-  ;; cached?: whether this statement has been cached (is non-transient).
-  ;;          Stored as a flag to avoid looking up the SQL in the cache.
-  (define-record-type sqlite-statement
-    (make-statement ptr sql db
-                    column-count column-names parameter-count cached?)
-    statement?
-    (ptr statement-ptr set-statement-ptr!)
-    (sql statement-sql)
-    (db  statement-db)
-    (column-count statement-column-count)
-    (column-names statement-column-names)
-    (parameter-count statement-parameter-count)
-    (cached? statement-cached? set-statement-cached!))
-  (define-record-printer (sqlite-statement s p)
-    (fprintf p "#<sqlite-statement ~S>"
-             (statement-sql s)))
 
   (define-record-type sqlite-database
     (make-db ptr filename busy-handler invoked-busy-handler? statement-cache)
@@ -337,6 +350,47 @@ int busy_notification_handler(void *ctx, int times) {
   (define-inline (nonnull-db-ptr db)
     (or (db-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
+
+  ;; Thin wrapper around sqlite-statement-handle, adding the two keys
+  ;; which allows us to reconstitute a finalized statement.
+  (define-record-type sqlite-statement
+    (make-statement db sql handle)
+    statement?
+    (db  statement-db)
+    (sql statement-sql)
+    (handle statement-handle set-statement-handle!))
+  (define-record-printer (sqlite-statement s p)
+    (fprintf p "#<sqlite-statement ~S>"
+             (statement-sql s)))
+
+  ;; Internal record making up the guts of a prepared statement;
+  ;; always embedded in a sqlite-statement.
+  (define-record-type sqlite-statement-handle
+    (make-handle ptr column-count column-names parameter-count cached?)
+    handle?
+    (ptr handle-ptr set-handle-ptr!)    
+    (column-count handle-column-count)
+    (column-names handle-column-names)
+    (parameter-count handle-parameter-count)
+    ;; cached? flag avoids a cache-ref to check existence.
+    (cached? handle-cached? set-handle-cached!))
+
+  ;; Convenience accessors for guts of statement.  Should be inlined.
+  (define (statement-ptr s)
+    (handle-ptr (statement-handle s)))
+  (define (set-statement-ptr! s p)
+    (set-handle-ptr! (statement-handle s) p))
+  (define (statement-column-count s)
+    (handle-column-count (statement-handle s)))
+  (define (statement-column-names s)
+    (handle-column-names (statement-handle s)))
+  (define (statement-parameter-count s)
+    (handle-parameter-count (statement-handle s)))
+  (define (statement-cached? s)
+    (handle-cached? (statement-handle s)))
+  (define (set-statement-cached! s b)
+    (set-handle-cached! (statement-handle s) b))
+
   (define-inline (nonnull-statement-ptr stmt)
     ;; All references to statement ptr implicitly check for valid db.
     (or (and (nonnull-db-ptr (statement-db stmt))
@@ -380,10 +434,9 @@ int busy_notification_handler(void *ctx, int times) {
                      (let* ((ncol (sqlite3_column_count stmt))
                             (nparam (sqlite3_bind_parameter_count stmt))
                             (names (make-vector ncol #f)))
-                       (make-statement stmt sql db
-                                              ncol names nparam
-                                              #f ; cached
-                                              ))
+                       (make-statement db sql
+                                       (make-handle stmt ncol names nparam
+                                                    #f))) ; cached
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
                  (let ((bh (db-busy-handler db)))
