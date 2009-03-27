@@ -161,13 +161,13 @@ int busy_notification_handler(void *ctx, int times) {
              stmt                       ; hmmm
              (and (step-through stmt)
                   (finalize stmt)       ; hah, this is wrong
-                  (change-count (sqlite-statement-db stmt))))
+                  (change-count (statement-db stmt))))
          ;; if returned columns = 0, step through, finalize and return # changes
          ;; otherwise, done (nb. cannot return 0 if step has not yet occurred!!)
          ))
 
   (define (finalized? stmt)
-    (or (sqlite-statement-ptr stmt)))
+    (or (statement-ptr stmt)))
   ;; Statement is not finalized, because query can be invoked
   ;; multiple times and we don't want to revivify the statement
   ;; every time (if the cache is off).
@@ -211,7 +211,7 @@ int busy_notification_handler(void *ctx, int times) {
                  (reset s)
                  #t))
            (finalize s)
-           (change-count (sqlite-statement-db s)))))
+           (change-count (statement-db s)))))
   
   ;; returns #f on failure, '() on done, '(col1 col2 ...) on success
   ;; note: "SQL statement" is uncompiled text;
@@ -302,20 +302,30 @@ int busy_notification_handler(void *ctx, int times) {
 
   ;; cached?: whether this statement has been cached (is non-transient).
   ;;          Stored as a flag to avoid looking up the SQL in the cache.
-  (define-record sqlite-statement ptr sql db
-    column-count column-names parameter-count cached?)
+  (define-record-type sqlite-statement
+    (make-statement ptr sql db
+                    column-count column-names parameter-count cached?)
+    statement?
+    (ptr statement-ptr set-statement-ptr!)
+    (sql statement-sql)
+    (db  statement-db)
+    (column-count statement-column-count)
+    (column-names statement-column-names)
+    (parameter-count statement-parameter-count)
+    (cached? statement-cached? set-statement-cached!))
+  
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
-             (sqlite-statement-sql s)))
+             (statement-sql s)))
   (define-record sqlite-database
     ptr filename busy-handler invoked-busy-handler? statement-cache)
   (define-inline (nonnull-sqlite-database-ptr db)
     (or (sqlite-database-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
-  (define-inline (nonnull-sqlite-statement-ptr stmt)
+  (define-inline (nonnull-statement-ptr stmt)
     ;; All references to statement ptr implicitly check for valid db.
-    (or (and (nonnull-sqlite-database-ptr (sqlite-statement-db stmt))
-             (sqlite-statement-ptr stmt))
+    (or (and (nonnull-sqlite-database-ptr (statement-db stmt))
+             (statement-ptr stmt))
         (error 'sqlite3-simple "operation on finalized statement")))
   (define-record-printer (sqlite-database db port)
     (fprintf port "#<sqlite-database ~A on ~S>"
@@ -334,7 +344,7 @@ int busy_notification_handler(void *ctx, int times) {
           (and-let* ((s (prepare-transient db sql)))
             (when (> (lru-cache-capacity c) 0)
               (lru-cache-set! c sql s)
-              (sqlite-statement-cached?-set! s #t))
+              (set-statement-cached! s #t))
             s))))
   ;; It might make sense to manually bypass the cache if you are creating
   ;; a statement which will definitely only be used once, especially a
@@ -359,7 +369,7 @@ int busy_notification_handler(void *ctx, int times) {
                      (let* ((ncol (sqlite3_column_count stmt))
                             (nparam (sqlite3_bind_parameter_count stmt))
                             (names (make-vector ncol #f)))
-                       (make-sqlite-statement stmt sql db
+                       (make-statement stmt sql db
                                               ncol names nparam
                                               #f ; cached
                                               ))
@@ -382,10 +392,10 @@ int busy_notification_handler(void *ctx, int times) {
   ;; takes a reset to convert "constraint failed" into "column key is
   ;; not unique".
   (define (step stmt)
-    (let ((db (sqlite-statement-db stmt)))
+    (let ((db (statement-db stmt)))
       (let retry ((times 0))
         (reset-busy! db)
-        (let ((rv (sqlite3_step (nonnull-sqlite-statement-ptr stmt))))
+        (let ((rv (sqlite3_step (nonnull-statement-ptr stmt))))
           (cond ((= rv status/row) 'row)
                 ((= rv status/done) 'done)
                 ((= rv status/misuse) ;; Error code/msg may not be set! :(
@@ -421,17 +431,17 @@ int busy_notification_handler(void *ctx, int times) {
   ;; no-op; it is explicitly checked for here [*], although normally
   ;; the cache prevents this issue.
   (define (finalize stmt)
-    (or (sqlite-statement-cached? stmt)
+    (or (statement-cached? stmt)
         (finalize-transient stmt)))
   (define (finalize-transient stmt)     ; internal
-    (or (not (sqlite-statement-ptr stmt))
-        (not (sqlite-database-ptr (sqlite-statement-db stmt))) ; [*]
+    (or (not (statement-ptr stmt))
+        (not (sqlite-database-ptr (statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
-                   (nonnull-sqlite-statement-ptr stmt)))) ; checks db here
-          (sqlite-statement-ptr-set! stmt #f)
+                   (nonnull-statement-ptr stmt)))) ; checks db here
+          (set-statement-ptr! stmt #f)
           (cond ((= rv status/abort)
                  (database-error
-                  (sqlite-statement-db stmt) 'finalize))
+                  (statement-db stmt) 'finalize))
                 ((= rv status/misuse)
                  (error 'finalize "misuse of interface"))
                 (else #t)))))
@@ -441,7 +451,7 @@ int busy_notification_handler(void *ctx, int times) {
   ;; an error, for compatibility with sqlite3_prepare.  We get the
   ;; error from sqlite3_step, so ignore any error here.
   (define (reset stmt)                  ; duplicates core binding
-    (sqlite3_reset (nonnull-sqlite-statement-ptr stmt))
+    (sqlite3_reset (nonnull-statement-ptr stmt))
     stmt)
 
   (define (bind-parameters stmt . params)
@@ -472,7 +482,7 @@ int busy_notification_handler(void *ctx, int times) {
       ;; SQLite will catch this and return a range error.
       ;; An indexing error should arguably be an immediate error...
       (error 'bind "index out of range" i))
-    (let ((ptr (nonnull-sqlite-statement-ptr stmt)))
+    (let ((ptr (nonnull-statement-ptr stmt)))
       (let ((rv 
              (cond ((string? x)
                     (sqlite3_bind_text ptr i x (string-length x)
@@ -490,9 +500,9 @@ int busy_notification_handler(void *ctx, int times) {
                    (else
                     (error 'bind "invalid argument type" x)))))
         (cond ((= rv status/ok) stmt)
-              (else (database-error (sqlite-statement-db stmt) 'bind))))))
+              (else (database-error (statement-db stmt) 'bind))))))
   
-  (define bind-parameter-count sqlite-statement-parameter-count)
+  (define bind-parameter-count statement-parameter-count)
 
   (define (change-count db)
     (sqlite3_changes (nonnull-sqlite-database-ptr db)))
@@ -500,7 +510,7 @@ int busy_notification_handler(void *ctx, int times) {
     (sqlite3_total_changes (nonnull-sqlite-database-ptr db)))
   (define (last-insert-rowid db)
     (sqlite3_last_insert_rowid (nonnull-sqlite-database-ptr db)))
-  (define column-count sqlite-statement-column-count)
+  (define column-count statement-column-count)
   (define (column-names stmt)
     (let loop ((i 0) (L '()))
       (let ((c (column-count stmt)))
@@ -508,18 +518,18 @@ int busy_notification_handler(void *ctx, int times) {
             (reverse L)
             (loop (+ i 1) (cons (column-name stmt i) L))))))
   (define (column-name stmt i)
-    (let ((v (sqlite-statement-column-names stmt)))
+    (let ((v (statement-column-names stmt)))
       (or (vector-ref v i)
           (let ((name (string->symbol
-                       (sqlite3_column_name (nonnull-sqlite-statement-ptr stmt)
+                       (sqlite3_column_name (nonnull-statement-ptr stmt)
                                             i))))
             (vector-set! v i name)
             name))))
   (define (column-type stmt i)
     ;; can't be cached, only valid for current row
-    (int->type (sqlite3_column_type (nonnull-sqlite-statement-ptr stmt) i)))
+    (int->type (sqlite3_column_type (nonnull-statement-ptr stmt) i)))
   (define (column-data stmt i)
-    (let ((stmt-ptr (nonnull-sqlite-statement-ptr stmt)))
+    (let ((stmt-ptr (nonnull-statement-ptr stmt)))
       (case (column-type stmt i)
         ;; INTEGER type may reach 64 bits; return at least 53 significant.
         ((integer) (sqlite3_column_int64 stmt-ptr i))
@@ -783,7 +793,7 @@ int busy_notification_handler(void *ctx, int times) {
   ;;          (let loop ((L '()))
   ;;            (match (fetch s)
   ;;                   (() (reverse L))
-  ;;                   (#f (raise-database-error (sqlite-statement-db s)
+  ;;                   (#f (raise-database-error (statement-db s)
   ;;                                             'fetch-all))
   ;;                   (p (loop (cons p L))))))))
 
@@ -793,7 +803,7 @@ int busy_notification_handler(void *ctx, int times) {
     (let loop ((L '()))
       (match (fetch s)
              (() (reverse L))
-             (#f (raise-database-error (sqlite-statement-db s) 'fetch-all))
+             (#f (raise-database-error (statement-db s) 'fetch-all))
              (p  (loop (cons p L))))))
 
   
