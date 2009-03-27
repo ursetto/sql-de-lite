@@ -300,6 +300,9 @@ int busy_notification_handler(void *ctx, int times) {
   ;;      ((> i 100))
   ;;    (print (q i)))
 
+
+;;; Record definitions
+  
   ;; cached?: whether this statement has been cached (is non-transient).
   ;;          Stored as a flag to avoid looking up the SQL in the cache.
   (define-record-type sqlite-statement
@@ -313,32 +316,40 @@ int busy_notification_handler(void *ctx, int times) {
     (column-names statement-column-names)
     (parameter-count statement-parameter-count)
     (cached? statement-cached? set-statement-cached!))
-  
   (define-record-printer (sqlite-statement s p)
     (fprintf p "#<sqlite-statement ~S>"
              (statement-sql s)))
-  (define-record sqlite-database
-    ptr filename busy-handler invoked-busy-handler? statement-cache)
-  (define-inline (nonnull-sqlite-database-ptr db)
-    (or (sqlite-database-ptr db)
+
+  (define-record-type sqlite-database
+    (make-db ptr filename busy-handler invoked-busy-handler? statement-cache)
+    db?
+    (ptr db-ptr set-db-ptr!)
+    (filename db-filename)
+    (busy-handler db-busy-handler set-db-busy-handler!)
+    (invoked-busy-handler? db-invoked-busy-handler?)
+    (statement-cache db-statement-cache))
+  (define-record-printer (sqlite-database db port)
+    (fprintf port "#<sqlite-database ~A on ~S>"
+             (or (db-ptr db)
+                 "(closed)")
+             (db-filename db)))
+  
+  (define-inline (nonnull-db-ptr db)
+    (or (db-ptr db)
         (error 'sqlite3-simple "operation on closed database")))
   (define-inline (nonnull-statement-ptr stmt)
     ;; All references to statement ptr implicitly check for valid db.
-    (or (and (nonnull-sqlite-database-ptr (statement-db stmt))
+    (or (and (nonnull-db-ptr (statement-db stmt))
              (statement-ptr stmt))
         (error 'sqlite3-simple "operation on finalized statement")))
-  (define-record-printer (sqlite-database db port)
-    (fprintf port "#<sqlite-database ~A on ~S>"
-             (or (sqlite-database-ptr db)
-                 "(closed)")
-             (sqlite-database-filename db)))
+
 
   ;; Looks up a prepared statement in the statement cache.  If
   ;; found, the statement is reset and returned; if not found, it
   ;; prepares a statement and caches it.  Statements are also marked
   ;; as cached, so FINALIZE is a no-op.
   (define (prepare db sql)
-    (let ((c (sqlite-database-statement-cache db)))
+    (let ((c (db-statement-cache db)))
       (or (and-let* ((s (lru-cache-ref c sql)))
             (reset s))
           (and-let* ((s (prepare-transient db sql)))
@@ -359,7 +370,7 @@ int busy_notification_handler(void *ctx, int times) {
     (let-location ((stmt (c-pointer "sqlite3_stmt")))
       (let retry ((times 0))
         (reset-busy! db)
-        (let ((rv (sqlite3_prepare_v2 (nonnull-sqlite-database-ptr db)
+        (let ((rv (sqlite3_prepare_v2 (nonnull-db-ptr db)
                                       sql
                                       (string-length sql)
                                       (location stmt)
@@ -375,7 +386,7 @@ int busy_notification_handler(void *ctx, int times) {
                                               ))
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
-                 (let ((bh (sqlite-database-busy-handler db)))
+                 (let ((bh (db-busy-handler db)))
                    (if (and bh
                             (retry-busy? db)
                             (bh db times))
@@ -403,7 +414,7 @@ int busy_notification_handler(void *ctx, int times) {
                  (error 'step "misuse of interface"))
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
-                 (let ((bh (sqlite-database-busy-handler db)))
+                 (let ((bh (db-busy-handler db)))
                    (if (and bh
                             (retry-busy? db)
                             (bh db times))
@@ -435,7 +446,7 @@ int busy_notification_handler(void *ctx, int times) {
         (finalize-transient stmt)))
   (define (finalize-transient stmt)     ; internal
     (or (not (statement-ptr stmt))
-        (not (sqlite-database-ptr (statement-db stmt))) ; [*]
+        (not (db-ptr (statement-db stmt))) ; [*]
         (let ((rv (sqlite3_finalize
                    (nonnull-statement-ptr stmt)))) ; checks db here
           (set-statement-ptr! stmt #f)
@@ -505,11 +516,11 @@ int busy_notification_handler(void *ctx, int times) {
   (define bind-parameter-count statement-parameter-count)
 
   (define (change-count db)
-    (sqlite3_changes (nonnull-sqlite-database-ptr db)))
+    (sqlite3_changes (nonnull-db-ptr db)))
   (define (total-change-count db)
-    (sqlite3_total_changes (nonnull-sqlite-database-ptr db)))
+    (sqlite3_total_changes (nonnull-db-ptr db)))
   (define (last-insert-rowid db)
-    (sqlite3_last_insert_rowid (nonnull-sqlite-database-ptr db)))
+    (sqlite3_last_insert_rowid (nonnull-db-ptr db)))
   (define column-count statement-column-count)
   (define (column-names stmt)
     (let loop ((i 0) (L '()))
@@ -574,7 +585,7 @@ int busy_notification_handler(void *ctx, int times) {
     (let-location ((db-ptr (c-pointer "sqlite3")))
       (let* ((rv (sqlite3_open filename (location db-ptr))))
         (if (eqv? rv status/ok)
-            (make-sqlite-database db-ptr
+            (make-db db-ptr
                                   filename
                                   #f    ; busy-handler
                                   (object-evict (vector #f)) ; invoked-busy?
@@ -583,7 +594,7 @@ int busy_notification_handler(void *ctx, int times) {
                                                   (lambda (sql stmt)
                                                     (finalize-transient stmt))))
             (if db-ptr
-                (database-error (make-sqlite-database db-ptr filename #f #f #f)
+                (database-error (make-db db-ptr filename #f #f #f)
                                 'open-database filename)
                 (error 'open-database "internal error: out of memory"))))))
 
@@ -592,9 +603,9 @@ int busy_notification_handler(void *ctx, int times) {
   ;; off statement).  May have to explicitly catch and signal error
   ;; everywhere.
   (define (error-code db)
-    (int->status (sqlite3_errcode (nonnull-sqlite-database-ptr db))))
+    (int->status (sqlite3_errcode (nonnull-db-ptr db))))
   (define (error-message db)
-    (sqlite3_errmsg (nonnull-sqlite-database-ptr db)))
+    (sqlite3_errmsg (nonnull-db-ptr db)))
 
   (define (database-error db where . args)
     (and (raise-database-errors)
@@ -603,8 +614,8 @@ int busy_notification_handler(void *ctx, int times) {
     (apply error where (error-message db) args))
 
   (define (close-database db)
-    (let ((db-ptr (nonnull-sqlite-database-ptr db)))
-      (lru-cache-flush! (sqlite-database-statement-cache db))
+    (let ((db-ptr (nonnull-db-ptr db)))
+      (lru-cache-flush! (db-statement-cache db))
       (do ((stmt (sqlite3_next_stmt db-ptr #f) ; finalize pending statements
                  (sqlite3_next_stmt db-ptr stmt)))
           ((not stmt))
@@ -612,8 +623,8 @@ int busy_notification_handler(void *ctx, int times) {
                           (sqlite3_sql stmt)))
         (sqlite3_finalize stmt))
       (cond ((eqv? status/ok (sqlite3_close db-ptr))
-             (sqlite-database-ptr-set! db #f)
-             (object-release (sqlite-database-invoked-busy-handler? db))
+             (set-db-ptr! db #f)
+             (object-release (db-invoked-busy-handler? db))
              #t)
             (else #f))))
 
@@ -672,7 +683,7 @@ int busy_notification_handler(void *ctx, int times) {
     (with-transaction db thunk 'exclusive))
 
   (define (autocommit? db)
-    (sqlite3_get_autocommit (nonnull-sqlite-database-ptr db)))
+    (sqlite3_get_autocommit (nonnull-db-ptr db)))
 
   ;; Rollback current transaction.  Reset pending statements before
   ;; doing so; rollback will fail if queries are running.  Resetting
@@ -690,7 +701,7 @@ int busy_notification_handler(void *ctx, int times) {
            (reset-running-queries! db)
            (exec db "commit;"))))
   (define (reset-running-queries! db)
-    (let ((db-ptr (nonnull-sqlite-database-ptr db)))
+    (let ((db-ptr (nonnull-db-ptr db)))
       (do ((stmt (sqlite3_next_stmt db-ptr #f)
                  (sqlite3_next_stmt db-ptr stmt)))
           ((not stmt))
@@ -714,18 +725,18 @@ int busy_notification_handler(void *ctx, int times) {
   ;; require safe-lambda for all calls into SQLite (a performance killer!)
   
   (define (retry-busy? db)
-    (vector-ref (sqlite-database-invoked-busy-handler? db) 0))
+    (vector-ref (db-invoked-busy-handler? db) 0))
   (define (reset-busy! db)
-    (vector-set! (sqlite-database-invoked-busy-handler? db) 0 #f))
+    (vector-set! (db-invoked-busy-handler? db) 0 #f))
   (define (set-busy-handler! db proc)
-    (sqlite-database-busy-handler-set! db proc)
+    (set-db-busy-handler! db proc)
     (if proc
-        (sqlite3_busy_handler (nonnull-sqlite-database-ptr db)
+        (sqlite3_busy_handler (nonnull-db-ptr db)
                               (foreign-value "busy_notification_handler"
                                              c-pointer)
                               (object->pointer
-                               (sqlite-database-invoked-busy-handler? db)))
-        (sqlite3_busy_handler (nonnull-sqlite-database-ptr db) #f #f))
+                               (db-invoked-busy-handler? db)))
+        (sqlite3_busy_handler (nonnull-db-ptr db) #f #f))
     (void))
   (define (thread-sleep!/ms ms)
     (thread-sleep!
