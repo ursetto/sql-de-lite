@@ -1,3 +1,5 @@
+;;; simple sqlite3 interface
+
 ;; pysqlite bench at http://oss.itsystementwicklung.de/trac/pysqlite/wiki/PysqliteTwoBenchmarks
 
 ;; This type of query (read/write) need only be stepped once, after
@@ -34,6 +36,15 @@
 ;; that piece could be stored in the cache), and the actual statement
 ;; object can just hold (db ptr X).  To revivify or grab from cache, only
 ;; one mutation would be required, set-X!.
+
+;; ---- Current reset behavior:
+;;   prepare: resets statement if pulled from cache; new statements not reset
+;;   query/exec: resets statement after execution
+;; Possible reset behavior: query/exec resets statement before and after
+;;   execution (after only if necessary).    Possibly better because
+;;   running manual statement will be reset, but worse because
+;;    a statement pulled from cache may be running and invalid to use
+;;    with (step!).
 
 #>  #include <sqlite3.h> <#
 #>
@@ -398,29 +409,10 @@ int busy_notification_handler(void *ctx, int times) {
         (error 'sqlite3-simple "operation on finalized statement")))
 
 
-  ;; Looks up a prepared statement in the statement cache.  If
-  ;; found, the statement is reset and returned; if not found, it
-  ;; prepares a statement and caches it.  Statements are also marked
-  ;; as cached, so FINALIZE is a no-op.
-  (define (prepare db sql)
-    (let ((c (db-statement-cache db)))
-      (or (and-let* ((s (lru-cache-ref c sql)))
-            (reset s))
-          (and-let* ((s (prepare-transient db sql)))
-            (when (> (lru-cache-capacity c) 0)
-              (lru-cache-set! c sql s)
-              (set-statement-cached! s #t))
-            s))))
-  ;; It might make sense to manually bypass the cache if you are creating
-  ;; a statement which will definitely only be used once, especially a
-  ;; dynamically generated one.  If you create a lot of these, transience
-  ;; may prevent bumping a more important statement out of the cache
-  ;; and having to re-prepare it.
-  ;; --
   ;; May return #f even on SQLITE_OK, which means the statement contained
   ;; only whitespace and comments and nothing was compiled.
   ;; BUSY may occur here.
-  (define (prepare-transient db sql)
+  (define (prepare-handle db sql)
     (let-location ((stmt (c-pointer "sqlite3_stmt")))
       (let retry ((times 0))
         (reset-busy! db)
@@ -434,9 +426,8 @@ int busy_notification_handler(void *ctx, int times) {
                      (let* ((ncol (sqlite3_column_count stmt))
                             (nparam (sqlite3_bind_parameter_count stmt))
                             (names (make-vector ncol #f)))
-                       (make-statement db sql
-                                       (make-handle stmt ncol names nparam
-                                                    #f))) ; cached
+                       (make-handle stmt ncol names nparam
+                                    #f)) ; cached
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
                  (let ((bh (db-busy-handler db)))
@@ -447,6 +438,29 @@ int busy_notification_handler(void *ctx, int times) {
                        (database-error db 'prepare sql))))
                 (else
                  (database-error db 'prepare sql)))))))
+
+  ;; Looks up a prepared statement in the statement cache.  If not
+  ;; found, it prepares a statement and caches it.  Statements pulled
+  ;; from cache are reset so that all statements prepared by this
+  ;; interface are at the beginning of their program.  Statements are
+  ;; also marked as cached, so FINALIZE is a no-op.
+  (define (prepare db sql)
+    (let ((c (db-statement-cache db)))
+      (cond ((lru-cache-ref c sql)
+             => reset)
+            ((prepare-handle db sql)
+             => (lambda (h)
+                  (let ((s (make-statement db sql h)))
+                    (when (> (lru-cache-capacity c) 0)
+                      (set-handle-cached! h #t)
+                      (lru-cache-set! c sql s))
+                    s)))
+            (else #f))))
+  
+  ;; Bypass cache when preparing statement.  Might occasionally be
+  ;; useful, but this call may also be removed.
+  (define (prepare-transient db sql)
+    (make-statement db sql (prepare-handle db sql)))
 
   ;; Returns #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE.
   ;; On error, statement is reset.  However, statement is not
