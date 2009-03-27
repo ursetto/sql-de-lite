@@ -6,6 +6,9 @@
 ;; which it will return DONE.
 ;;  INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;
 
+;; LRU cache lookup (and therefore update) does not happen on
+;; statement access, only on preparation.
+
 ;; TODO rewrite:
 ;; Remove (execute ...).  If low-level interface is desired, user should
 ;; use bind and reset.  If high-level interface, use query/exec.  query/exec
@@ -55,62 +58,52 @@ int busy_notification_handler(void *ctx, int times) {
 <#
 
 (module sqlite3-simple
-  (
+  *
+;;   (
+;;    error-code error-message
+;;    open-database close-database
+;;    prepare prepare-transient
+;;    execute execute-sql
+;;    fetch fetch-alist
+;;    fetch-all                            ; ?
+;;    raise-database-error
+;;    finalize step                        ; step-through
+;;    column-count column-name column-type column-data
+;;    column-names                         ; convenience
+;;    bind bind-parameters bind-parameter-count
+;;    library-version                      ; string, not proc
+;;    row-data row-alist
+;;    reset                                ; core binding!
+;;    call-with-database
+;;    call-with-prepared-statement call-with-prepared-statements
+;;    change-count total-change-count last-insert-rowid
+;;    with-transaction with-deferred-transaction
+;;    with-immediate-transaction with-exclusive-transaction
+;;    autocommit?
+;;    rollback commit
 
-   ;; FFI, for testing
-   sqlite3_open sqlite3_close sqlite3_exec
-   sqlite3_errcode sqlite3_extended_errcode
-   sqlite3_prepare_v2
+;;    set-busy-handler! busy-timeout
+;;    retry-busy? reset-busy!              ; internal
 
-   ;; API
-   error-code error-message
-   open-database close-database
-   prepare prepare-transient
-   execute execute-sql
-   fetch fetch-alist
-   fetch-all                            ; ?
-   raise-database-error
-   finalize step                        ; step-through
-   column-count column-name column-type column-data
-   column-names                         ; convenience
-   bind bind-parameters bind-parameter-count
-   library-version                      ; string, not proc
-   row-data row-alist
-   reset                                ; core binding!
-   call-with-database
-   call-with-prepared-statement call-with-prepared-statements
-   change-count total-change-count last-insert-rowid
-   with-transaction with-deferred-transaction
-   with-immediate-transaction with-exclusive-transaction
-   autocommit?
-   rollback commit
+;;    ;; advanced interface
+;;    query exec sql
 
-   set-busy-handler! busy-timeout
-   retry-busy? reset-busy!              ; internal
-   with-query first-row
-
-   ;; advanced interface
-   query exec
-
-   ;; syntax
-   let-prepare
-
-   ;; parameters
-   raise-database-errors
-   prepared-cache-size
+;;    ;; parameters
+;;    raise-database-errors
+;;    prepared-cache-size
    
-   ;; debugging
-   int->status status->int             
+;;    ;; debugging
+;;    int->status status->int             
 
-   ;; experimental interface
-   for-each-row for-each-row*
-   map-rows map-rows*
-   fold-rows fold-rows*
-   query-for-each query-for-each*
-   query-map query-map*
-   query-fold query-fold*
+;;    ;; experimental interface
+;;    for-each-row for-each-row*
+;;    map-rows map-rows*
+;;    fold-rows fold-rows*
+;;    query-for-each query-for-each*
+;;    query-map query-map*
+;;    query-fold query-fold*
                 
-   )
+;;    )
 
   (import scheme
           (except chicken reset))
@@ -207,8 +200,10 @@ int busy_notification_handler(void *ctx, int times) {
          ;; otherwise, done (nb. cannot return 0 if step has not yet occurred!!)
          ))
 
-  (define (finalized? stmt)
-    (or (statement-ptr stmt)))
+  (define (finalized? stmt)           ; inline
+    (or (not (statement-handle stmt))
+        (not (statement-ptr stmt))))
+
   ;; Statement is not finalized, because query can be invoked
   ;; multiple times and we don't want to revivify the statement
   ;; every time (if the cache is off).
@@ -243,16 +238,30 @@ int busy_notification_handler(void *ctx, int times) {
                          v)
                         (else
                          (change-count db))))))))))
-  (define (exec db sql . args)
-    ;; (exec db "insert into cache(k,v) values(?,?);" 1 2) ;=> #changes
-    (let ((s (prepare db sql)))
-      (and (apply bind-parameters s args)
-           (and-let* ((v (step s)))
-             (if (eq? v 'row)
-                 (reset s)
-                 #t))
-           (finalize s)
-           (change-count (statement-db s)))))
+
+  ;; Resurrects finalized statement s or, if still live, just resets it.
+  (define (resurrect! s)            ; inline
+    (cond ((finalized? s)
+           (set-statement-handle! s (prepare-handle (statement-db s)
+                                                    (statement-sql s))))
+          (else
+           (reset s)
+           (void))))
+
+  (define (exec s . args)
+    ;; (exec (sql db "insert into cache(k,v) values(?,?);")
+    ;;       1 2) ;=> #changes
+    ;; (exec (sql db "select * from cache;"))  ;=> (key val)
+    (resurrect! s)
+    (and (apply bind-parameters s args)
+         (let ((v (fetch s)))
+           (when (pair? v) (reset s))
+           (if (> (column-count s) 0)
+               v
+               (change-count (statement-db s))))))
+
+  (define (sql db sql-str)
+    (make-statement db sql-str #f))  ; (finalized? s) => #t
   
   ;; returns #f on failure, '() on done, '(col1 col2 ...) on success
   ;; note: "SQL statement" is uncompiled text;
@@ -695,19 +704,6 @@ int busy_notification_handler(void *ctx, int times) {
              #t)
             (else #f))))
 
-  (define (call-with-prepared-statement db sql proc)
-    (let ((stmt (prepare db sql)))
-      (begin0 (proc stmt)               ; ignore exceptions
-        (finalize stmt))))
-  (define (call-with-prepared-statements db sqls proc) ; sqls is list
-    (let ((stmts (map (lambda (s) (prepare db s))
-                      sqls)))
-      (begin0 (apply proc stmts)
-        (do ((stmts stmts (cdr stmts)))
-            ((null? stmts))
-          (if (car stmts)
-              (finalize (car stmts)))))))
-
   (define (call-with-database filename proc)
     (let ((db (open-database filename)))
       (let ((c (current-exception-handler)))
@@ -834,46 +830,6 @@ int busy_notification_handler(void *ctx, int times) {
                       (else
                        (thread-sleep!/ms delay)
                        #t))))))))))
-
-  (define-syntax let-prepare
-    (syntax-rules ()
-      ((let-prepare db ((v sql))
-         e0 e1 ...)
-       (call-with-prepared-statement db sql
-                                     (lambda (v) e0 e1 ...)))
-      ((let-prepare db ((v0 sql0) ...)
-         e0 e1 ...)
-       (call-with-prepared-statements db (list sql0 ...)
-                                      (lambda (v0 ...) e0 e1 ...)))))
-
-  ;; Useful for raw API usage, but may be outdated in terms of
-  ;; what it catches and resets; see QUERY
-  (define (with-query stmt thunk)
-    (let ((c (current-exception-handler)))
-      (let ((rv 
-             (with-exception-handler (lambda (ex) (reset stmt) (c ex))
-                                     thunk)))
-        (reset stmt)
-        rv)))
-  
-  ;; might not be necessary with nicer syntax for with-query --
-  ;; e.g. (with-query s fetch) or (query s (fetch s))
-  ;; but we -could- avoid introducing an exception thunk
-  (define (first-row stmt)
-    (with-query stmt (lambda () (fetch stmt))))
-
-  ;;   (define (fetch-all s)
-  ;;     ;; It is possible the query is not required if database errors are off.
-  ;;     ;; Reset is also not required if statement runs to completion, but
-  ;;     ;; is always done by the query.
-  ;;     (with-query
-  ;;      s (lambda ()
-  ;;          (let loop ((L '()))
-  ;;            (match (fetch s)
-  ;;                   (() (reverse L))
-  ;;                   (#f (raise-database-error (statement-db s)
-  ;;                                             'fetch-all))
-  ;;                   (p (loop (cons p L))))))))
 
   ;; (the above is the original definition pre (query).  Previously fetch-all
   ;; set up a new query; now it is designed to work from (query).
