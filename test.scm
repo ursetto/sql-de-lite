@@ -270,13 +270,20 @@
       0
       (call-with-database ":memory:"
           (lambda (db)
-            (exec db "create table a(k primary key, v);")
-            (exec db "insert into a values(?,?)" "foo" "bar")      
-            (exec db "insert or ignore into a values(?,?)" "foo" "bar")
-            (exec db "insert or ignore into a values(?,?)" "foo" "bar"))))
+            (exec (sql db "create table a(k primary key, v);"))
+            (exec (sql db "insert into a values(?,?)")
+                  "foo" "bar")
+            (exec (sql db "insert or ignore into a values(?,?)")
+                  "foo" "bar")
+            (exec (sql db "insert or ignore into a values(?,?)")
+                  "foo" "bar"))))
 
-;; Should throw a invalid argument type error, but we can't test that yet
-;; ((query db "select * from cache where key = ?;") column-names)
+(test-error "invalid bound parameter type (procedure) throws error"
+            (call-with-database 'memory
+              (lambda (db)
+                (exec (sql db "create table a(k,v);"))
+                (exec (sql db "select * from a where k = ?;")
+                      identity))))
 
 (test-group
  "open-database"
@@ -291,7 +298,9 @@
  (test "open temp database using 'temporary"
        '(1 2)
        (call-with-database 'temporary
-         (lambda (db) (exec (sql db "select 1,2;"))))))
+         (lambda (db) (exec (sql db "select 1,2;")))))
+ ;;(test "home directory expansion")
+ )
 
 (test-group
  "large integers"
