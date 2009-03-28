@@ -222,8 +222,8 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Resurrects finalized statement s or, if still live, just resets it.
   (define (resurrect! s)                ; inline
     (cond ((finalized? s)
-           (set-statement-handle! s (prepare-handle (statement-db s)
-                                                    (statement-sql s))))
+           (let ((sn (prepare (statement-db s) (statement-sql s))))
+             (set-statement-handle! s (statement-handle sn))))
           (else
            (reset s)
            (void))))
@@ -358,7 +358,7 @@ int busy_notification_handler(void *ctx, int times) {
   (define (prepare db sql)
     (let ((c (db-statement-cache db)))
       (cond ((lru-cache-ref c sql)
-             => reset)
+             => reset)  ; Cache hit -should- imply non-finalized
             ((prepare-handle db sql)
              => (lambda (h)
                   (let ((s (make-statement db sql h)))
@@ -590,7 +590,8 @@ int busy_notification_handler(void *ctx, int times) {
   ;; as filename.
   (define (open-database filename)
     (let-location ((db-ptr (c-pointer "sqlite3")))
-      (let* ((rv (sqlite3_open filename (location db-ptr))))
+      (let* ((rv (sqlite3_open (##sys#expand-home-path filename)
+                               (location db-ptr))))
         (if (eqv? rv status/ok)
             (make-db db-ptr
                      filename
