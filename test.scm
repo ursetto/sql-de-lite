@@ -99,21 +99,39 @@
 
 (test-group
  "reset"
- (test "with-query resets statement immediately (normal exit)"
+ (test "query resets statement immediately (normal exit)"
        '((1) (1))
        (call-with-database ":memory:"
          (lambda (db)
-           (let-prepare db ((s "select 1 union select 2;"))
-             (list (with-query s (lambda () (fetch s)))
-                   (with-query s (lambda () (fetch s))))))))
- (test "with-query resets statement immediately (error exit)"
+           (let ((s (sql db "select 1 union select 2;")))
+             (list (query fetch s)
+                   (fetch s))))))
+ (test "query resets statement immediately (error exit)"
        '((oops) (1))
        (call-with-database ":memory:"
          (lambda (db)
-           (let-prepare db ((s "select 1 union select 2;"))
+           (let ((s (sql db "select 1 union select 2;")))
              (list (handle-exceptions exn '(oops)
-                     (with-query s (lambda () (fetch s) (error 'oops))))
-                   (with-query s (lambda () (fetch s)))))))))
+                     (query (lambda (s) (fetch s) (error 'oops))
+                            s))
+                   (fetch s))))))
+ (test "exec resets query immediately"
+       '((1) (1))
+       (call-with-database ":memory:"
+         (lambda (db)
+           (let ((s (sql db "select 1 union select 2;")))
+             (list (exec s)
+                   (fetch s))))))
+ (test-error "exec does NOT reset when column count = 0"
+             ;; Fails with status/misuse.
+             (call-with-database ":memory:"
+               (lambda (db)
+                 (exec (sql db "create table a(k,v);"))
+                 (let ((s (sql db "insert or ignore into a values(1,2);")))
+                   (list (exec s)
+                         (fetch s))))))
+ )
+
 
 (test "fetch first row via fetch"
       '(1 2)
@@ -136,7 +154,7 @@
           (let ((s (sql db "select 1, 2 union select 3, 4;")))
             (query fetch s)))))
 
-(test "fetch all rows via fetch-all + reset + fetch-all"
+(test "fetch all rows twice via fetch-all + reset + fetch-all"
       '(((1 2) (3 4) (5 6)) reset ((1 2) (3 4) (5 6)))
       (call-with-database ":memory:"
         (lambda (db)
@@ -147,7 +165,7 @@
                   (begin (reset s) 'reset)
                   (fetch-all s))))))
 
-(test "fetch all rows via (query fetch-all ...)"
+(test "fetch all rows twice via (query fetch-all ...) x 2"
       '(((1 2) (3 4) (5 6)) ((1 2) (3 4) (5 6)))
       (call-with-database ":memory:"
         (lambda (db)
@@ -155,6 +173,7 @@
                                                "select 3, 4 union "
                                                "select 5, 6;"))))
             (list (query fetch-all s)
+                  ; reset not required
                   (query fetch-all s))))))
 
 (test "fetch-all reads remaining rows mid-query"
