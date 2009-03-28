@@ -115,75 +115,68 @@
                      (with-query s (lambda () (fetch s) (error 'oops))))
                    (with-query s (lambda () (fetch s)))))))))
 
-;; syntax wrong -- query body cannot access statement
-;; (test "query/fetch first-row"
-;;       '(1 2)
-;;       (call-with-database ":memory:"
-;;         (lambda (db)
-;;           (query (execute-sql db "select 1, 2 union select 3, 4;")
-;;                  (fetch s)))))
-
-;; (test "query/fetch first row via (query s (fetch s))"
-;;       '(1 2)
-;;       (call-with-database ":memory:"
-;;         (lambda (db)
-;;           (let-prepare db ((s "select 1, 2 union select 3, 4;"))
-;;             (query s (fetch s))))))
-
-;; (test "query/fetch first row via (query fetch)"
-;;       '(1 2)
-;;       (call-with-database ":memory:"
-;;         (lambda (db)
-;;           (let ((q (query db "select 1, 2 union select 3, 4;" fetch)))
-;;             (q)))))
-
-(test "query/fetch first row via first-row"
+(test "fetch first row via fetch"
       '(1 2)
       (call-with-database ":memory:"
         (lambda (db)
-          (let-prepare db ((s "select 1, 2 union select 3, 4;"))
-            (first-row s)))))
+          (let ((s (prepare db "select 1, 2 union select 3, 4;")))
+            (fetch s)))))
 
-(test "query/fetch all rows via fetch-all"
+(test "fetch first row via exec"
+      '(1 2)
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let ((s (sql db "select 1, 2 union select 3, 4;")))
+            (exec s)))))
+
+(test "fetch first row via (query fetch ...)"
+      '(1 2)
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let ((s (sql db "select 1, 2 union select 3, 4;")))
+            (query fetch s)))))
+
+(test "fetch all rows via fetch-all + reset + fetch-all"
       '(((1 2) (3 4) (5 6)) reset ((1 2) (3 4) (5 6)))
       (call-with-database ":memory:"
         (lambda (db)
-          (let-prepare db ((s (string-literal "select 1, 2 union "
-                                              "select 3, 4 union "
-                                              "select 5, 6;")))
+          (let ((s (prepare db (string-literal "select 1, 2 union "
+                                               "select 3, 4 union "
+                                               "select 5, 6;"))))
             (list (fetch-all s)
-                  'reset
+                  (begin (reset s) 'reset)
                   (fetch-all s))))))
+
+(test "fetch all rows via (query fetch-all ...)"
+      '(((1 2) (3 4) (5 6)) ((1 2) (3 4) (5 6)))
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let ((s (prepare db (string-literal "select 1, 2 union "
+                                               "select 3, 4 union "
+                                               "select 5, 6;"))))
+            (list (query fetch-all s)
+                  (query fetch-all s))))))
 
 (test "fetch-all reads remaining rows mid-query"
       '((1 2) fetch ((3 4) (5 6)))
       (call-with-database ":memory:"
         (lambda (db)
-          (let-prepare db ((s (string-literal "select 1, 2 union "
-                                              "select 3, 4 union "
-                                              "select 5, 6;")))
+          (let ((s (prepare db (string-literal "select 1, 2 union "
+                                               "select 3, 4 union "
+                                               "select 5, 6;"))))
             (list (fetch s)
                   'fetch
                   (fetch-all s))))))
 
-(test "Pending open queries are finalized after let-prepare"
-      '((1) (3))
-      (let ((db (open-database ":memory:")))
-        (let ((rv 
-               (let-prepare db ((s1 "select 1 union select 2")
-                                (s2 "select 3 union select 4"))
-                 (list (fetch (execute s1)) (fetch (execute s2))))))
-          (close-database db)
-          rv)))
-
-(test "Pending open queries are finalized when DB is closed"
-      '((1) (3))
-      (let* ((db (open-database ":memory:"))
-             (s1 (prepare db "select 1 union select 2"))
-             (s2 (prepare db "select 3 union select 4")))
-        (let ((rv (list (fetch (execute s1)) (fetch (execute s2)))))
-          (close-database db) ; finalize here
-          rv)))
+;; No way to really test this other than inspecting warnings
+;; (test "Pending cached queries are finalized when DB is closed"
+;;       '((1) (3))
+;;       (let* ((db (open-database ":memory:"))
+;;              (s1 (prepare db "select 1 union select 2"))
+;;              (s2 (prepare db "select 3 union select 4")))
+;;         (let ((rv (list (fetch s1) (fetch s2))))
+;;           (close-database db) ; finalize here
+;;           rv)))
 
 ;; let-prepare finalization will error when database is closed
 ;; Should actually succeed, as ideally statements will be set to #f
@@ -191,15 +184,19 @@
 (test "Finalizing previously finalized statement OK even after DB is closed"
       '((1) (3))
       (let ((db (open-database ":memory:")))
-        (let-prepare db ((s1 "select 1 union select 2")
-                         (s2 "select 3 union select 4"))
-          (let ((rv (list (fetch (execute s1)) (fetch (execute s2)))))
+        (let ((s1 (prepare-transient db "select 1 union select 2"))
+              (s2 (prepare-transient db "select 3 union select 4")))
+          (let ((rv (list (fetch s1)
+                          (fetch s2))))
             (close-database db)
-            rv))))   ; s1 and s2 are refinalized after let-prepare
+            (finalize s1)
+            (finalize s2)
+            rv))))
 
 (test "Transient statements are finalized but not FINALIZED? in call/db"
       ;; They are finalized (you may receive a warning), but don't show
-      ;; up as FINALIZED?.
+      ;; up as FINALIZED?.  Currently, we do not confirm finalization
+      ;; other than through manually inspecting the warning.
       #f
       (let ((s1 #f) (s2 #f))
         (handle-exceptions ex
