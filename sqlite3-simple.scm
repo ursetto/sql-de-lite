@@ -599,25 +599,33 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Perhaps this should always throw an error.
   ;; NULL (#f) filename allowed, creates private on-disk database,
   ;; same as "".
-  ;; FIXME Should allow symbols 'memory => ":memory:" and 'temp => ""
+  ;; Allows symbols 'memory => ":memory:" and 'temp or 'temporary => ""
   ;; as filename.
   (define (open-database filename)
-    (let-location ((db-ptr (c-pointer "sqlite3")))
-      (let* ((rv (sqlite3_open (##sys#expand-home-path filename)
-                               (location db-ptr))))
-        (if (eqv? rv status/ok)
-            (make-db db-ptr
-                     filename
-                     #f                 ; busy-handler
-                     (object-evict (vector #f)) ; invoked-busy?
-                     (make-lru-cache (prepared-cache-size)
-                                     string=?
-                                     (lambda (sql stmt)
-                                       (finalize-transient stmt))))
-            (if db-ptr
-                (database-error (make-db db-ptr filename #f #f #f)
-                                'open-database filename)
-                (error 'open-database "internal error: out of memory"))))))
+    (let ((filename
+           (if (string? filename)
+               (##sys#expand-home-path filename)
+               (case filename
+                 ((memory) ":memory:")
+                 ((temp temporary) "")
+                 (else (error 'open-database "unrecognized database type"
+                              filename))))))
+      (let-location ((db-ptr (c-pointer "sqlite3")))
+        (let* ((rv (sqlite3_open (##sys#expand-home-path filename)
+                                 (location db-ptr))))
+          (if (eqv? rv status/ok)
+              (make-db db-ptr
+                       filename
+                       #f                       ; busy-handler
+                       (object-evict (vector #f)) ; invoked-busy?
+                       (make-lru-cache (prepared-cache-size)
+                                       string=?
+                                       (lambda (sql stmt)
+                                         (finalize-transient stmt))))
+              (if db-ptr
+                  (database-error (make-db db-ptr filename #f #f #f)
+                                  'open-database filename)
+                  (error 'open-database "internal error: out of memory")))))))
 
   (define (close-database db)
     (let ((db-ptr (nonnull-db-ptr db)))

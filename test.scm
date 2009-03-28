@@ -258,10 +258,11 @@
       '((3 4) (5 6))
       (call-with-database ":memory:"
         (lambda (db)
-          (exec (sql db "create table a(k,v);"))
-          (exec (sql db "create table b(k,v);"))
-          (exec (sql db "insert into a values(3,4);"))
-          (exec (sql db "insert into a values(5,6);"))
+          (define (e x) (exec (sql db x)))
+          (e "create table a(k,v);")
+          (e "create table b(k,v);")
+          (e "insert into a values(3,4);")
+          (e "insert into a values(5,6);")
           (step (prepare db "insert into b select * from a;")) ; the test
           (query fetch-all (sql db "select * from b;")))))
 
@@ -276,6 +277,21 @@
 
 ;; Should throw a invalid argument type error, but we can't test that yet
 ;; ((query db "select * from cache where key = ?;") column-names)
+
+(test-group
+ "open-database"
+ (test "open in-memory database using 'memory"
+       '(1 2)
+       (call-with-database 'memory
+         (lambda (db) (exec (sql db "select 1,2;")))))
+ (test "open temp database using 'temp"
+       '(1 2)
+       (call-with-database 'temp
+         (lambda (db) (exec (sql db "select 1,2;")))))
+ (test "open temp database using 'temporary"
+       '(1 2)
+       (call-with-database 'temporary
+         (lambda (db) (exec (sql db "select 1,2;"))))))
 
 (test-group
  "large integers"
