@@ -258,12 +258,12 @@
       '((3 4) (5 6))
       (call-with-database ":memory:"
         (lambda (db)
-          (execute-sql db "create table a(k,v);")
-          (execute-sql db "create table b(k,v);")
-          (execute-sql db "insert into a values(3,4);")
-          (execute-sql db "insert into a values(5,6);")
-          (step (prepare db "insert into b select * from a;"))  ; the test
-          (fetch-all (prepare db "select * from b;")))))
+          (exec (sql db "create table a(k,v);"))
+          (exec (sql db "create table b(k,v);"))
+          (exec (sql db "insert into a values(3,4);"))
+          (exec (sql db "insert into a values(5,6);"))
+          (step (prepare db "insert into b select * from a;")) ; the test
+          (query fetch-all (sql db "select * from b;")))))
 
 (test "cached statement may be exec'ed multiple times"
       0
@@ -283,17 +283,16 @@
  (call-with-database ":memory:"
    (lambda (db)
      (let ((rowid 1234567890125))
-       (execute-sql db "create table cache(k,v);")
+       (exec (sql db "create table cache(k,v);"))
        ;; Note the hardcoded insert to ensure the value is correct.
-       (execute-sql db "insert into cache(rowid,k,v) values(1234567890125, 'jimmy', 'dunno');")
+       (exec (sql db "insert into cache(rowid,k,v) values(1234567890125, 'jimmy', 'dunno');"))
        (test (conc "last-insert-rowid on int64 rowid " rowid)
              rowid
              (last-insert-rowid db))
        (test (conc "retrieve row containing int64 rowid " rowid)
              `(,rowid "jimmy" "dunno")
-             (fetch (execute-sql db
-                                 "select rowid, * from cache where rowid = ?;"
-                                 rowid)))))))
+             (exec (sql db "select rowid, * from cache where rowid = ?;")
+                   rowid))))))
 
 ;;; Future tests
 
