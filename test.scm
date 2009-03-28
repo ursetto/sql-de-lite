@@ -70,29 +70,33 @@
 
 (test-group
  "rollback"
- (test-error "Open queries prevent SQL ROLLBACK"
-       (call-with-database ":memory:"
-         (lambda (db)
-           (execute-sql db "begin;")
-           (or (equal? '(1) (fetch (execute-sql db "select 1 union select 2")))
-               (error 'fetch "fetch failed during test"))
-           (execute-sql db "rollback;"))))  ; will throw SQLITE_BUSY
- (test "(rollback) resets open queries" 0
+ (test-error "Open queries prevent SQL ROLLBACK"     ; will throw SQLITE_BUSY
+             (call-with-database ":memory:"
+               (lambda (db)
+                 (exec (sql db "begin;"))
+                 (or (equal? '(1)
+                             (fetch (prepare db "select 1 union select 2")))
+                     (error 'fetch "fetch failed during test"))
+                 (exec (sql db "rollback;")))))
+ (test "(rollback) resets open queries"
+       0
        ;; We assume reset worked if no error; should we explicitly test it?
        (call-with-database ":memory:"
          (lambda (db)
-           (execute-sql db "begin;")
-           (or (equal? '(1) (fetch (execute-sql db "select 1 union select 2")))
+           (exec (sql db "begin;"))
+           (or (equal? '(1)
+                       (fetch (prepare db "select 1 union select 2")))
                (error 'fetch "fetch failed during test"))
            (rollback db))))
- (test "with-transaction rollback resets open queries" #f
+ (test "with-transaction rollback resets open queries"
+       #f
        ;; We assume reset worked if no error; should we explicitly test it?
        (call-with-database ":memory:"
          (lambda (db)
            (with-transaction db
              (lambda ()
                (or (equal? '(1)
-                           (fetch (execute-sql db "select 1 union select 2")))
+                           (fetch (prepare db "select 1 union select 2")))
                    (error 'fetch "fetch failed during test"))
                #f ; rollback
                ))))))
