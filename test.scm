@@ -197,26 +197,37 @@
             (close-database db)
             rv))))   ; s1 and s2 are refinalized after let-prepare
 
-(test-error "Pending statements are finalized on error in call-with-database"
-            ;; Should receive error 'oops here
-            ;; FIXME should test that statements are actually finalized
-            ;; rather than relying on error 'oops reception and manual
-            ;; inspection of warning.  Also verify finalization occurs in
-            ;; call-with-database, not let-prepare
-      (call-with-database ":memory:"
-        (lambda (db)
-          (let-prepare db ((s1 "select 1 union select 2")
-                           (s2 "select 3 union select 4"))
-            (list (fetch (execute s1))
-                  (error 'oops)
-                  (fetch (execute s2)))))))
+(test "Transient statements are finalized but not FINALIZED? in call/db"
+      ;; They are finalized (you may receive a warning), but don't show
+      ;; up as FINALIZED?.
+      #f
+      (let ((s1 #f) (s2 #f))
+        (handle-exceptions ex
+            (and (finalized? s1) (finalized? s2))
+          (call-with-database ":memory:"
+            (lambda (db)
+              (set! s1 (prepare-transient db "select 1 union select 2"))
+              (set! s2 (prepare-transient db "select 3 union select 4"))
+              (step s1)
+              (error 'oops))))))
+(test "Cached statements are finalized on error in call-with-database"
+      #t
+      (let ((s1 #f) (s2 #f))
+        (handle-exceptions ex
+            (and (finalized? s1) (finalized? s2))
+          (call-with-database ":memory:"
+            (lambda (db)
+              (set! s1 (prepare db "select 1 union select 2"))
+              (set! s2 (prepare db "select 3 union select 4"))
+              (step s1)
+              (error 'oops))))))
 
 (test "create / insert one row via execute-sql"
       1
       (call-with-database ":memory:"
         (lambda (db)
-          (execute-sql db "create table cache(k,v);")
-          (execute-sql db "insert into cache values('jml', 'oak');"))))
+          (exec (sql db "create table cache(k,v);"))
+          (exec (sql db "insert into cache values('jml', 'oak');")))))
 
 (test-group
  "finalization"
