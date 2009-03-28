@@ -9,45 +9,7 @@
 ;; LRU cache lookup (and therefore update) does not happen on
 ;; statement access, only on preparation.
 
-;; TODO rewrite:
-;; Remove (execute ...).  If low-level interface is desired, user should
-;; use bind and reset.  If high-level interface, use query/exec.  query/exec
-;; will work with prepared statements or (sql ...).  Note: only downside is
-;; that query/exec enforces argument binding; recommendation: create
-;; query*/exec* which do not accept arguments, and allow binding to
-;; be done manually.
-;; --
-;; query/exec should revivify finalized statements, including those
-;; proto-statements created with (sql ...).  If it was transient,
-;; consider putting the new version in the cache, as we needed it
-;; at least twice.
-;; --
-;; Downside 2: If you are running multiple execs or queries against the
-;; same statement, you should save the sql object to a variable.  Otherwise
-;; the query has to look up the statement in the cache and mutate the
-;; sql object every time. If the cache is disabled, a new prepare will be
-;; done each time (same with using (prepare) of course).
-;; This was already a problem with (exec) as it did not accept a statement
-;; object.  NB!! This is bad, because we either have to mutate the
-;; sql object with the cached data, or do a hash lookup every time.
-;; If the user uses the same sql object, only one initial mutation
-;; is required, then that sql object is a valid statement for the rest of the
-;; queries.  If a fresh object is used, then either we must do a cache
-;; lookup each time, or an object mutation.  The same exact problem
-;; will occur with reviving finalized statements.
-;; Possible solution: use shared structure; the (ptr column-count column-names parameter-count cached?) fields would become their own object "X" (maybe just
-;; that piece could be stored in the cache), and the actual statement
-;; object can just hold (db ptr X).  To revivify or grab from cache, only
-;; one mutation would be required, set-X!.
-
-;; ---- Current reset behavior:
-;;   prepare: resets statement if pulled from cache; new statements not reset
-;;   query/exec: resets statement after execution
-;; Possible reset behavior: query/exec resets statement before and after
-;;   execution (after only if necessary).    Possibly better because
-;;   running manual statement will be reset, but worse because
-;;    a statement pulled from cache may be running and invalid to use
-;;    with (step!).
+;;; Direct-to-C
 
 #>  #include <sqlite3.h> <#
 #>
@@ -57,53 +19,52 @@ int busy_notification_handler(void *ctx, int times) {
 }                                                     
 <#
 
+;;; Module definition
+
 (module sqlite3-simple
   *
-;;   (
-;;    error-code error-message
-;;    open-database close-database
-;;    prepare prepare-transient
-;;    execute execute-sql
-;;    fetch fetch-alist
-;;    fetch-all                            ; ?
-;;    raise-database-error
-;;    finalize step                        ; step-through
-;;    column-count column-name column-type column-data
-;;    column-names                         ; convenience
-;;    bind bind-parameters bind-parameter-count
-;;    library-version                      ; string, not proc
-;;    row-data row-alist
-;;    reset                                ; core binding!
-;;    call-with-database
-;;    call-with-prepared-statement call-with-prepared-statements
-;;    change-count total-change-count last-insert-rowid
-;;    with-transaction with-deferred-transaction
-;;    with-immediate-transaction with-exclusive-transaction
-;;    autocommit?
-;;    rollback commit
+  ;;   (
+  ;;    error-code error-message
+  ;;    open-database close-database
+  ;;    prepare prepare-transient
+  ;;    execute execute-sql
+  ;;    fetch fetch-alist
+  ;;    fetch-all                            ; ?
+  ;;    raise-database-error
+  ;;    finalize step                        ; step-through
+  ;;    column-count column-name column-type column-data
+  ;;    column-names                         ; convenience
+  ;;    bind bind-parameters bind-parameter-count
+  ;;    library-version                      ; string, not proc
+  ;;    row-data row-alist
+  ;;    reset                                ; core binding!
+  ;;    call-with-database
+  ;;    call-with-prepared-statement call-with-prepared-statements
+  ;;    change-count total-change-count last-insert-rowid
+  ;;    with-transaction with-deferred-transaction
+  ;;    with-immediate-transaction with-exclusive-transaction
+  ;;    autocommit?
+  ;;    rollback commit
 
-;;    set-busy-handler! busy-timeout
-;;    retry-busy? reset-busy!              ; internal
+  ;;    set-busy-handler! busy-timeout
+  ;;    retry-busy? reset-busy!              ; internal
 
-;;    ;; advanced interface
-;;    query exec sql
+  ;;    ;; advanced interface
+  ;;    query query* exec exec* sql
 
-;;    ;; parameters
-;;    raise-database-errors
-;;    prepared-cache-size
+  ;;    ;; parameters
+  ;;    raise-database-errors
+  ;;    prepared-cache-size
    
-;;    ;; debugging
-;;    int->status status->int             
-
-;;    ;; experimental interface
-;;    for-each-row for-each-row*
-;;    map-rows map-rows*
-;;    fold-rows fold-rows*
-;;    query-for-each query-for-each*
-;;    query-map query-map*
-;;    query-fold query-fold*
+  ;;    ;; experimental interface
+  ;;    for-each-row for-each-row*
+  ;;    map-rows map-rows*
+  ;;    fold-rows fold-rows*
+  ;;    query-for-each query-for-each*
+  ;;    query-map query-map*
+  ;;    query-fold query-fold*
                 
-;;    )
+  ;;    )
 
   (import scheme
           (except chicken reset))
@@ -115,6 +76,8 @@ int busy_notification_handler(void *ctx, int times) {
   (import foreign foreigners easyffi)
   (require-extension matchable)
   (require-extension lru-cache)
+
+;;; Foreign interface
 
   #>? #include "sqlite3-api.h" <#
   
@@ -169,189 +132,19 @@ int busy_notification_handler(void *ctx, int times) {
   (define-foreign-variable destructor-type/static
     sqlite3:destructor-type "SQLITE_STATIC")
   (define library-version (foreign-value "sqlite3_version" c-string))
+
+;;; Parameters
   
   (define raise-database-errors (make-parameter #t))
   (define prepared-cache-size (make-parameter 100))
+
+;;; Syntax
 
   (define-syntax begin0                 ; multiple values discarded
     (syntax-rules () ((_ e0 e1 ...)
                       (let ((tmp e0)) e1 ... tmp))))
 
-  (define (execute-sql db sql . params)
-    (and-let* ((s (prepare db sql)))
-      (apply execute s params)))
-
-  ;; DBD::SQLite:
-  ;; execute steps entire statement when column count is zero,
-  ;; returning number of changes.  If columns != 0, it does a step! to
-  ;; prepare for fetch (but returns 0 whether data is available or
-  ;; not); fetch calls step! after execution.  note that this will run
-  ;; an extra step when you don't need it
-
-  (define (execute stmt . params)
-    (and (reset stmt)
-         (apply bind-some-parameters stmt 1 params)
-         (if (> (column-count stmt) 0)
-             stmt                       ; hmmm
-             (and (step-through stmt)
-                  (finalize stmt)       ; hah, this is wrong
-                  (change-count (statement-db stmt))))
-         ;; if returned columns = 0, step through, finalize and return # changes
-         ;; otherwise, done (nb. cannot return 0 if step has not yet occurred!!)
-         ))
-
-  (define (finalized? stmt)           ; inline
-    (or (not (statement-handle stmt))
-        (not (statement-ptr stmt))))
-
-  ;; Statement is not finalized, because query can be invoked
-  ;; multiple times and we don't want to revivify the statement
-  ;; every time (if the cache is off).
-  ;; The optional proc is equivalent to FETCH but no exception
-  ;; handler for reset is required.  However, this is a bit
-  ;; counterintuitive; you may expect all rows to be returned.
-  (define (query db sql #!optional (proc #f))
-    (let ((s #f))
-      ;; We -might- be able to analyze parameter binding here if
-      ;; we were to prepare the statement immediately.
-      (lambda args
-        (when (or (not s)
-                  (finalized? s))       ; stale statement
-          (set! s (prepare db sql)))
-        ;; If statement was cached, prepare has already reset it.
-        (and
-         (apply bind-parameters s args)
-         (cond (proc
-                (let ((c (current-exception-handler)))
-                  (begin0
-                      (with-exception-handler
-                       (lambda (ex) (reset s) (c ex))
-                       (lambda () (proc s)))
-                    (reset s))))
-               (else
-                ;; Results are ignored; step once.  Statement will be reset
-                ;; in (step) if an error occurs; we reset it here if a result
-                ;; row was returned.
-                (and-let* ((v (fetch s)))
-                  (when (pair? v) (reset s))
-                  (cond ((> (column-count s) 0)
-                         v)
-                        (else
-                         (change-count db))))))))))
-
-  ;; Resurrects finalized statement s or, if still live, just resets it.
-  (define (resurrect! s)            ; inline
-    (cond ((finalized? s)
-           (set-statement-handle! s (prepare-handle (statement-db s)
-                                                    (statement-sql s))))
-          (else
-           (reset s)
-           (void))))
-
-  (define (exec s . args)
-    ;; (exec (sql db "insert into cache(k,v) values(?,?);")
-    ;;       1 2) ;=> #changes
-    ;; (exec (sql db "select * from cache;"))  ;=> (key val)
-    (resurrect! s)
-    (and (apply bind-parameters s args)
-         (let ((v (fetch s)))
-           (when (pair? v) (reset s))
-           (if (> (column-count s) 0)
-               v
-               (change-count (statement-db s))))))
-
-  (define (sql db sql-str)
-    (make-statement db sql-str #f))  ; (finalized? s) => #t
-  
-  ;; returns #f on failure, '() on done, '(col1 col2 ...) on success
-  ;; note: "SQL statement" is uncompiled text;
-  ;; "prepared statement" is prepared compiled statement.
-  ;; sqlite3 egg uses "sql" and "stmt" for these, respectively
-  (define (fetch s)
-    (and-let* ((rv (step s)))
-      (case rv
-        ((done) '())
-        ((row) (row-data s))
-        (else
-         (error 'fetch "internal error: step result invalid" rv)))))
-  (define (fetch-alist s)               ; nearly identical to (fetch)
-    (and-let* ((rv (step s)))
-      (case rv
-        ((done) '())
-        ((row) (row-alist s))
-        (else
-         (error 'fetch "internal error: step result invalid" rv)))))
-
-  ;;; Experimental statement traversal.  These call fetch repeatedly
-  ;;; to grab entire rows, passing them to proc.
-  (define (for-each-row proc s)
-    (let loop ()
-      (let ((x (fetch s)))
-        (cond ((null? x) #t)
-              (else
-               (proc x)
-               (loop))))))
-  (define (map-rows proc s)
-    (let loop ((L '()))
-      (let ((x (fetch s)))
-        (cond ((null? x) (reverse L))
-              (else
-               (loop (cons (proc x) L)))))))
-  (define (fold-rows kons knil s)
-    (let loop ((xs knil))
-      (let ((x (fetch s)))
-        (cond ((null? x) xs)
-              (else
-               (loop (kons x xs)))))))
-  ;; In the starred versions, proc gets one arg for each column.
-  ;; You could use match-lambda to achieve the same effect.
-  (define (for-each-row* proc s)
-    (for-each-row (lambda (r) (apply proc r)) s))
-  (define (map-rows* proc s)
-    (map-rows (lambda (r) (apply proc r)) s))
-  (define (fold-rows* proc s)
-    (fold-rows (lambda (r) (apply proc r)) s))
-  ;; (query-for-each* (lambda (name sql)
-  ;;                    (print "table: " name " sql: " sql ";"))
-  ;;                  db "select name, sql from sqlite_master;")
-  ;;; These set up a query.
-  (define (query-for-each* proc db sql . params)
-    (let ((q (query db sql (lambda (s) (for-each-row* proc s)))))
-      (apply q params)))
-  (define (query-map* proc db sql . params)
-    (let ((q (query db sql (lambda (s) (map-rows* proc s)))))
-      (apply q params)))
-  (define (query-fold* proc db sql . params)
-    (let ((q (query db sql (lambda (s) (fold-rows* proc s)))))
-      (apply q params)))
-  (define (query-for-each proc db sql . params)
-    (let ((q (query db sql (lambda (s) (for-each-row proc s)))))
-      (apply q params)))
-  (define (query-map proc db sql . params)
-    (let ((q (query db sql (lambda (s) (map-rows proc s)))))
-      (apply q params)))
-  (define (query-fold proc db sql . params)
-    (let ((q (query db sql (lambda (s) (fold-rows proc s)))))
-      (apply q params)))
-
-
-  
-  ;;   (let ((st (prepare db "select k, v from cache where k = ?;")))
-  ;;     (do ((i 0 (+ i 1)))
-  ;;         ((> i 100))
-  ;;       (execute! st i)
-  ;;       (match (fetch st)
-  ;;              ((k v) (print (list k v)))
-  ;;              (() (error "no such key" k))))
-  ;;     (finalize! st))
-
-  ;; (let ((q (query db "select k, v from cache where k = ?;")))
-  ;;  (do ((i 0 (+ i 1)))
-  ;;      ((> i 100))
-  ;;    (print (q i)))
-
-
-;;; Record definitions
+;;; Records
 
   (define-record-type sqlite-database
     (make-db ptr filename busy-handler invoked-busy-handler? statement-cache)
@@ -417,10 +210,119 @@ int busy_notification_handler(void *ctx, int times) {
              (statement-ptr stmt))
         (error 'sqlite3-simple "operation on finalized statement")))
 
+  (define (finalized? stmt)             ; inline
+    (or (not (statement-handle stmt))
+        (not (statement-ptr stmt))))
 
-  ;; May return #f even on SQLITE_OK, which means the statement contained
-  ;; only whitespace and comments and nothing was compiled.
-  ;; BUSY may occur here.
+;;; High-level interface  
+
+  (define (sql db sql-str)
+    (make-statement db sql-str #f))     ; (finalized? s) => #t
+  
+  ;; Resurrects finalized statement s or, if still live, just resets it.
+  (define (resurrect! s)                ; inline
+    (cond ((finalized? s)
+           (set-statement-handle! s (prepare-handle (statement-db s)
+                                                    (statement-sql s))))
+          (else
+           (reset s)
+           (void))))
+
+  ;; Resurrects s, binds args to s and performs a query*.  This is the
+  ;; usual way to perform a query unless you need to bind arguments
+  ;; manually or need other manual control.
+  (define (query proc s . args)
+    (resurrect! s)
+    (and (apply bind-parameters s args)
+         (query* proc s)))
+  ;; Calls (proc s) and resets the statement immediately afterward, to
+  ;; avoid locking the database.  If an exception occurs during proc,
+  ;; the statement will still be reset.  Statement is NOT reset before
+  ;; execution.
+  (define (query* proc s)
+    (let ((c (current-exception-handler)))
+      (begin0 (with-exception-handler
+               (lambda (ex) (reset s) (c ex))
+               (lambda () (proc s)))
+        (reset s))))
+
+  ;; Resurrects s, binds args to s and performs an exec*.
+  (define (exec s . args)
+    (resurrect! s)
+    (and (apply bind-parameters s args)
+         (exec* s)))
+  ;; Executes statement s, returning the number of changes (if the
+  ;; result set has no columns as in INSERT, DELETE) or the first row (if
+  ;; column data is returned as in SELECT).  Resurrection is omitted, as it
+  ;; would wipe out any bindings.  Reset is NOT done beforehand.
+  ;; Reset is done afterward only if a row was returned.
+  (define (exec* s)
+    (and-let* ((v (fetch s)))
+      (when (pair? v) (reset s))
+      (if (> (column-count s) 0)
+          v
+          (change-count (statement-db s)))))
+  
+  ;; Statement traversal.  These return a lambda suitable for use
+  ;; in the proc slot of query.  They call fetch repeatedly
+  ;; to grab entire rows, passing them to proc.
+  (define (for-each-row proc)
+    (lambda (s)
+      (let loop ()
+        (let ((x (fetch s)))
+          (cond ((null? x) #t)
+                (else
+                 (proc x)
+                 (loop)))))))
+  (define (map-rows proc)
+    (lambda (s)
+      (let loop ((L '()))
+        (let ((x (fetch s)))
+          (cond ((null? x) (reverse L))
+                (else
+                 (loop (cons (proc x) L))))))))
+  (define (fold-rows kons knil)
+    (lambda (s)
+      (let loop ((xs knil))
+        (let ((x (fetch s)))
+          (cond ((null? x) xs)
+                (else
+                 (loop (kons x xs))))))))
+  ;; In the starred versions, proc gets one arg for each column.
+  ;; Users can use match-lambda to achieve the same effect.
+  (define (for-each-row* proc)
+    (for-each-row (lambda (r) (apply proc r))))
+  (define (map-rows* proc)
+    (map-rows (lambda (r) (apply proc r))))
+  (define (fold-rows* proc)
+    (fold-rows (lambda (r) (apply proc r))))
+
+  ;; These produce equivalent results:  
+  ;; (query (map-rows car) (sql db "select name, sql from sqlite_master;"))
+  ;; (map car (query fetch-all (sql db "select name, sql from sqlite_master;")))
+
+  ;; These produce equivalent results:
+  ;; 
+  ;; (query (for-each-row* (lambda (name sql)
+  ;;                         (print "table: " name " sql: " sql ";")))
+  ;;        (sql db "select name, sql from sqlite_master;"))
+  ;; (query (for-each-row (match-lambda ((name sql)
+  ;;                         (print "table: " name " sql: " sql ";"))))
+  ;;        (sql db "select name, sql from sqlite_master;"))  
+
+;;; Experimental
+  (define (print-schema db)
+    (for-each (lambda (x) (print x ";")) (schema db)))
+  (define (schema db)
+    (query (map-rows car)
+           (sql db "select sql from sqlite_master where sql not NULL;")))
+
+;;; Lowlevel interface
+
+  ;; Internal.  Returns a statement-handle suitable for embedding in
+  ;; a statement record.
+  ;; (Note: May return #f even on SQLITE_OK, which means the statement
+  ;; contained only whitespace and comments and nothing was compiled.)
   (define (prepare-handle db sql)
     (let-location ((stmt (c-pointer "sqlite3_stmt")))
       (let retry ((times 0))
@@ -500,26 +402,19 @@ int busy_notification_handler(void *ctx, int times) {
                  (reset stmt)
                  (database-error db 'step stmt)))))))
 
-  (define (step-through stmt)
-    (let loop ()
-      (case (step stmt)
-        ((row)  (loop))
-        ((done) 'done)                  ; stmt?
-        (else #f))))
-
-  ;; Finalize generally only returns an error if statement execution
-  ;; failed; we don't need that here.  However, it can return
-  ;; status/abort if the VM is interrupted, or status/misuse.  We
-  ;; always disable our statement, return #t for all errors except for
-  ;; abort or misuse, and throw those.
-
-  ;; Finalizing a finalized statement or a cached statement is a
-  ;; no-op.  Finalizing a statement on a closed DB is also a
-  ;; no-op; it is explicitly checked for here [*], although normally
-  ;; the cache prevents this issue.
+  ;; Finalize a statement.  Finalizing a finalized statement or a
+  ;; cached statement is a no-op.  Finalizing a statement on a closed
+  ;; DB is also a no-op; it is explicitly checked for here [*],
+  ;; although normally the cache prevents this issue.  All statements
+  ;; are automatically finalized when the database is closed, and cached
+  ;; statements are finalized as they expire, so it is rarely necessary
+  ;; to call this.
   (define (finalize stmt)
     (or (statement-cached? stmt)
         (finalize-transient stmt)))
+  ;; Finalize a statement now, regardless of its cached status.  The
+  ;; statement is not removed from the cache.  Finalization is indicated
+  ;; by #f in the statement-handle pointer slot.
   (define (finalize-transient stmt)     ; internal
     (or (not (statement-ptr stmt))
         (not (db-ptr (statement-db stmt))) ; [*]
@@ -650,6 +545,42 @@ int busy_notification_handler(void *ctx, int times) {
                         (column-data stmt i))
                   (loop (fx+ i 1)))))))
 
+  ;; Step statement and return row data. Returns #f (or error) on failure,
+  ;; '() on done, '(col1 col2 ...) on success.
+  (define (fetch s)
+    (and-let* ((rv (step s)))
+      (case rv
+        ((done) '())
+        ((row) (row-data s))
+        (else
+         (error 'fetch "internal error: step result invalid" rv)))))
+  ;; Same as fetch, but returns an alist: '((name1 . col1) ...)
+  (define (fetch-alist s)               ; nearly identical to (fetch)
+    (and-let* ((rv (step s)))
+      (case rv
+        ((done) '())
+        ((row) (row-alist s))
+        (else
+         (error 'fetch "internal error: step result invalid" rv)))))
+  
+  ;; (the above is the original definition pre (query).  Previously fetch-all
+  ;; set up a new query; now it is designed to work from (query).
+  (define (fetch-all s)
+    (let loop ((L '()))
+      (match (fetch s)
+             (() (reverse L))
+             (#f (raise-database-error (statement-db s) 'fetch-all))
+             (p  (loop (cons p L))))))
+
+;;   (define (step-through stmt)
+;;     (let loop ()
+;;       (case (step stmt)
+;;         ((row)  (loop))
+;;         ((done) 'done)                  ; stmt?
+;;         (else #f))))
+
+;;; Database
+  
   ;; If errors are off, user can't retrieve error message as we
   ;; return #f instead of db; though it's probably SQLITE_CANTOPEN.
   ;; Perhaps this should always throw an error.
@@ -662,32 +593,17 @@ int busy_notification_handler(void *ctx, int times) {
       (let* ((rv (sqlite3_open filename (location db-ptr))))
         (if (eqv? rv status/ok)
             (make-db db-ptr
-                                  filename
-                                  #f    ; busy-handler
-                                  (object-evict (vector #f)) ; invoked-busy?
-                                  (make-lru-cache (prepared-cache-size)
-                                                  string=?
-                                                  (lambda (sql stmt)
-                                                    (finalize-transient stmt))))
+                     filename
+                     #f                 ; busy-handler
+                     (object-evict (vector #f)) ; invoked-busy?
+                     (make-lru-cache (prepared-cache-size)
+                                     string=?
+                                     (lambda (sql stmt)
+                                       (finalize-transient stmt))))
             (if db-ptr
                 (database-error (make-db db-ptr filename #f #f #f)
                                 'open-database filename)
                 (error 'open-database "internal error: out of memory"))))))
-
-  ;; database-error-code?
-  ;; Issue: SQLITE_MISUSE may not set error code (happens when step
-  ;; off statement).  May have to explicitly catch and signal error
-  ;; everywhere.
-  (define (error-code db)
-    (int->status (sqlite3_errcode (nonnull-db-ptr db))))
-  (define (error-message db)
-    (sqlite3_errmsg (nonnull-db-ptr db)))
-
-  (define (database-error db where . args)
-    (and (raise-database-errors)
-         (apply raise-database-error db where args)))
-  (define (raise-database-error db where . args)
-    (apply error where (error-message db) args))
 
   (define (close-database db)
     (let ((db-ptr (nonnull-db-ptr db)))
@@ -712,6 +628,18 @@ int busy_notification_handler(void *ctx, int times) {
              (lambda (ex) (close-database db) (c ex))
              (lambda () (proc db)))
           (close-database db)))))
+  
+  (define (error-code db)
+    (int->status (sqlite3_errcode (nonnull-db-ptr db))))
+  (define (error-message db)
+    (sqlite3_errmsg (nonnull-db-ptr db)))
+  (define (database-error db where . args)
+    (and (raise-database-errors)
+         (apply raise-database-error db where args)))
+  (define (raise-database-error db where . args)
+    (apply error where (error-message db) args))
+
+;;; Transactions
 
   ;; Escaping or re-entering the dynamic extent of THUNK will not
   ;; affect the in-progress transaction.  However, if an exception
@@ -722,9 +650,9 @@ int busy_notification_handler(void *ctx, int times) {
                    (immediate . "begin immediate;")
                    (exclusive . "begin exclusive;"))))
       (lambda (db thunk #!optional (type 'deferred))
-        (and (execute-sql db (or (alist-ref type tsqls)
-                                 (error 'with-transaction
-                                        "invalid transaction type" type)))
+        (and (exec (sql db (or (alist-ref type tsqls)
+                               (error 'with-transaction
+                                      "invalid transaction type" type))))
              (let ((rv 
                     (handle-exceptions ex (begin (or (rollback db)
                                                      (error 'with-transaction
@@ -732,7 +660,8 @@ int busy_notification_handler(void *ctx, int times) {
                                                  (signal ex))
                       (let ((rv (thunk))) ; only 1 return value allowed
                         (and rv
-                             (execute-sql db "commit;") ; MAY FAIL WITH BUSY
+                             ;; MAY FAIL WITH BUSY.  Should we rollback?
+                             (commit db)
                              rv)))))
                (or rv
                    (if (rollback db)
@@ -756,13 +685,13 @@ int busy_notification_handler(void *ctx, int times) {
     (cond ((autocommit? db) #t)
           (else
            (reset-running-queries! db)
-           (exec db "rollback;"))))
+           (exec (sql db "rollback;")))))
   ;; Same behavior as rollback.
   (define (commit db)
     (cond ((autocommit? db) #t)
           (else
            (reset-running-queries! db)
-           (exec db "commit;"))))
+           (exec (sql db "commit;")))))
   (define (reset-running-queries! db)
     (let ((db-ptr (nonnull-db-ptr db)))
       (do ((stmt (sqlite3_next_stmt db-ptr #f)
@@ -831,51 +760,4 @@ int busy_notification_handler(void *ctx, int times) {
                        (thread-sleep!/ms delay)
                        #t))))))))))
 
-  ;; (the above is the original definition pre (query).  Previously fetch-all
-  ;; set up a new query; now it is designed to work from (query).
-  (define (fetch-all s)
-    (let loop ((L '()))
-      (match (fetch s)
-             (() (reverse L))
-             (#f (raise-database-error (statement-db s) 'fetch-all))
-             (p  (loop (cons p L))))))
-
-  
-  ;; (I think (void) and '() should both be treated as NULL)
-  ;; careful of return value conflict with '() meaning SQLITE_DONE though
-  ;;   (define void?
-  ;;     (let ((v (void)))
-  ;;       (lambda (x) (eq? v x))))
   )
-
-;;; Notes
-
-
-;; I would like to have execute take a procedure argument which
-;; resets the statement after finishing, but the syntax doesn't work,
-;; because execute binds parameters as well.
-;; (execute s (lambda () ...)) == (with-query (execute s) (lambda () ...))
-;; but (with-query (execute s 1 2 3) (lambda () ...)) ?= (execute (bind-parameters s 1 2 3) (lambda () ...)
-;; I guess execute could return a -procedure- but this is gross
-;; ((execute s 1 2 3) (lambda () ...))
-;; ((execute s (lambda () ...)) 1 2 3)
-
-
-;; Another idea: have (prepare db sql) return a procedure that, when called,
-;; binds its arguments in order.
-;; (let ((s (prepare db "select * from cache where key = ?;")))
-;;    (s 5))
-;; Looks cool because it's like a function call, but just syntactic sugar for
-;; (execute s 5).  And we still have to pass a thunk in to execute in
-;; a protected environment.
-
-;; (execute ((sql db "select * from cache where k = ?;") 1)
-;;          (lambda (s) (fetch s)))
-
-;; ((query db "select * from cache where k = ?" fetch-all) 1)
-;; (let ((q (query db "select * from cache where k = ?" fetch)))
-;;   (q 2)  ; -> (2 3)
-;;   (q 1))  ; -> (1 2)
-
-;; ((query db "insert into cache(k,v) values(?,?)") 1 2)
-;; (update db "insert into cache(k,v) values(?,?)" 1 2)    ; shorthand
