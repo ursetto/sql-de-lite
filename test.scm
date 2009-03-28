@@ -218,31 +218,45 @@
           (execute-sql db "create table cache(k,v);")
           (execute-sql db "insert into cache values('jml', 'oak');"))))
 
-(test-error   ;; operation on finalized statement
- "Execute after finalize fails"
- (call-with-database ":memory:"
-   (lambda (db)
-     (execute-sql db "create table cache(k,v);")
-     (let-prepare db ((s "insert into cache values('jml', 'oak');"))
-       (finalize s)
-       (execute s)))))
+(test-group
+ "finalization"
+ (test ;; operation on finalized statement
+  "exec after finalize succeeds (statement resurrected)"
+  1
+  (call-with-database ":memory:"
+    (lambda (db)
+      (exec (sql db "create table cache(k,v);"))
+      (let ((s (prepare-transient
+                db "insert into cache values('jml', 'oak');")))
+        (finalize s)
+        (exec s)))))
+ (test-error ;; operation on finalized statement
+  "reset after finalize fails"
+  (call-with-database ":memory:"
+    (lambda (db)
+      (exec (sql db "create table cache(k,v);"))
+      (let ((s (prepare-transient
+                db "insert into cache values('jml', 'oak');")))
+        (finalize s)
+        (reset s))))) 
 
-(test-error   ;;  operation on closed database
- ;; Expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
- "Operating on statement fails after database close"
- (let ((s (call-with-database ":memory:"
-            (lambda (db)
-              (execute-sql db "create table cache(k,v);")
-              (prepare db "insert into cache values('jml', 'oak');")))))
-   (execute s))) 
-
-(test "Double finalization ignored in let-prepare + execute"
-      1
-      (call-with-database ":memory:"
-        (lambda (db)
-          (execute-sql db "create table cache(k,v);")
-          (let-prepare db ((s "insert into cache values('jml', 'oak');"))
-            (execute s)))))
+ (test-error ;;  operation on closed database
+  ;; Expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
+  "Operating on statement fails after database close (cache enabled)"
+  (let ((s (call-with-database ":memory:"
+             (lambda (db)
+               (exec (sql db "create table cache(k,v);"))
+               (prepare db "insert into cache values('jml', 'oak');")))))
+    (exec s)))
+ (test-error ;;  operation on closed database
+  ;; Expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
+  "Operating on statement fails after database close (cache disabled)"
+  (let ((s (call-with-database ":memory:"
+             (lambda (db)
+               (exec (sql db "create table cache(k,v);"))
+               (prepare-transient
+                db "insert into cache values('jml', 'oak');")))))
+    (exec s))))
 
 (test "Successful rollback outside transaction"
       #t
