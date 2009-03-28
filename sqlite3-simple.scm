@@ -9,6 +9,11 @@
 ;; LRU cache lookup (and therefore update) does not happen on
 ;; statement access, only on preparation.
 
+;;; Bugs
+
+;; (query* fetch (sql db "select 1, 2 union select 3, 4;"))
+;; => results in an infinite loop
+
 ;;; Direct-to-C
 
 #>  #include <sqlite3.h> <#
@@ -207,6 +212,7 @@ int busy_notification_handler(void *ctx, int times) {
   (define-inline (nonnull-statement-ptr stmt)
     ;; All references to statement ptr implicitly check for valid db.
     (or (and (nonnull-db-ptr (statement-db stmt))
+             (statement-handle stmt)
              (statement-ptr stmt))
         (error 'sqlite3-simple "operation on finalized statement")))
 
@@ -240,11 +246,20 @@ int busy_notification_handler(void *ctx, int times) {
   ;; the statement will still be reset.  Statement is NOT reset before
   ;; execution.
   (define (query* proc s)
-    (let ((c (current-exception-handler)))
-      (begin0 (with-exception-handler
-               (lambda (ex) (reset s) (c ex))
-               (lambda () (proc s)))
-        (reset s))))
+    ;; (when (or (not (statement? s)) ; Optional check before entering
+    ;;           (finalized? s))      ; exception handler.
+    ;;   (error 'query* "operation on finalized statement"))
+    (begin0
+        (let ((c (current-exception-handler)))
+          (with-exception-handler
+           (lambda (ex)  ; careful not to throw another exception in here
+             (when (statement? s)
+               (and-let* ((h (statement-handle s))
+                          (ptr (handle-ptr h)))
+                 (sqlite3_reset ptr)))
+             (c ex))
+           (lambda () (proc s))))
+        (reset s)))
 
   ;; Resurrects s, binds args to s and performs an exec*.
   (define (exec s . args)
@@ -478,7 +493,6 @@ int busy_notification_handler(void *ctx, int times) {
                                        destructor-type/transient))
                    ((null? x)
                     (sqlite3_bind_null ptr i))
-                   ;;        ((boolean? value))
                    (else
                     (error 'bind "invalid argument type" x)))))
         (cond ((= rv status/ok) stmt)
@@ -499,7 +513,7 @@ int busy_notification_handler(void *ctx, int times) {
         (if (>= i c)
             (reverse L)
             (loop (+ i 1) (cons (column-name stmt i) L))))))
-  (define (column-name stmt i)
+  (define (column-name stmt i)    ;; Get result set column names, lazily.
     (let ((v (statement-column-names stmt)))
       (or (vector-ref v i)
           (let ((name (string->symbol
@@ -563,8 +577,7 @@ int busy_notification_handler(void *ctx, int times) {
         (else
          (error 'fetch "internal error: step result invalid" rv)))))
   
-  ;; (the above is the original definition pre (query).  Previously fetch-all
-  ;; set up a new query; now it is designed to work from (query).
+  ;; Fetch remaining rows into a list.
   (define (fetch-all s)
     (let loop ((L '()))
       (match (fetch s)
