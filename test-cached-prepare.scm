@@ -1,4 +1,4 @@
-(use sqlite3-simple)
+(use sql-de-lite)
 (use miscmacros)
 (use lru-cache)
 
@@ -28,21 +28,10 @@
                                               (finalize stmt)))))
     (set! lru-cache cache)
     (lambda (db sql)
-      (or (lru-cache-ref cache sql)
-          (and-let* ((stmt (prepare db sql)))
+      (or (lru-cache-ref cache sql)  ; note: reset not done
+          (and-let* ((stmt (prepare-transient db sql)))
             (lru-cache-set! cache sql stmt)
             stmt)))))
-
-;; TODO: prepare/cached/lru -- alist where recently-used statements move
-;; to the front.  Probably only useful if the cache size is fixed; we
-;; would have to finalize statements as they drop off, and each statement
-;; would have to be checked for preparedness at execute time.  Note:
-;; I believe statements could disappear from under us during a STEP in
-;; the pathological case.  Unless statements are always prepared
-;; opportunistically at execute time; then this problem would not occur
-;; unless you have > 100 simultaneous running queries.  However, the
-;; statement has to be prepared for us to get data on number of parameters
-;; and column count.
 
 ;; tested with schema:
 ;; create table cache(key text primary key, val text);
@@ -64,11 +53,14 @@
      ;; prepare statement not requiring schema
      (time (repeat   47000
                      (finalize (prepare-transient db "select 1;"))))
+     ;; -- After upgrading to sql-de-lite, speed penalty (800000 -> 480000).
+     ;; -- It's because statement is now reset when it is pulled from cache,
+     ;; -- which is not accounted for in other tests.
      ;; cached prepare statement where schema must be checked (small schema)
-     (time (repeat  800000
+     (time (repeat  480000
                      (prepare db "select * from cache;")))
      ;; cached prepare statement not requiring schema
-     (time (repeat  850000
+     (time (repeat  520000
                      (prepare db "select 1;")))
      
 ;;; rerun for hash cache
@@ -99,7 +91,7 @@
                                                "select 0;"
                                                "select 1;"))))   
      (print "-- alternate between two statements, native egg cache")
-     (time (dotimes (i 700000)
+     (time (dotimes (i 430000)
                     (prepare db (if (fx= (fxand i 1) 1)
                                     "select 0;"
                                     "select 1;"))))   
