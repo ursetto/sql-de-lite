@@ -1,5 +1,5 @@
 (use test)
-(use sqlite3-simple)
+(use sql-de-lite)
 
 ;; Concatenate string literals into a single literal at compile time.
 ;; (string-literal "a" "b" "c") -> "abc"

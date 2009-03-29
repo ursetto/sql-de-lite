@@ -19,7 +19,7 @@ int busy_notification_handler(void *ctx, int times) {
 
 ;;; Module definition
 
-(module sqlite3-simple
+(module sql-de-lite
   *
   ;;   (
   ;;    error-code error-message
