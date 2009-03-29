@@ -1,18 +1,11 @@
 ;;; simple sqlite3 interface
 
-;; pysqlite bench at http://oss.itsystementwicklung.de/trac/pysqlite/wiki/PysqliteTwoBenchmarks
+;; This type of query need only be stepped once, after which
+;; it will return DONE.
+;; => "INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;"
 
-;; This type of query (read/write) need only be stepped once, after
-;; which it will return DONE.
-;;  INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;
-
-;; LRU cache lookup (and therefore update) does not happen on
+;; LRU cache lookup (and therefore update) does not occur on
 ;; statement access, only on preparation.
-
-;;; Bugs
-
-;; (query* fetch (sql db "select 1, 2 union select 3, 4;"))
-;; => results in an infinite loop
 
 ;;; Direct-to-C
 
@@ -680,8 +673,7 @@ int busy_notification_handler(void *ctx, int times) {
                                                  (signal ex))
                       (let ((rv (thunk))) ; only 1 return value allowed
                         (and rv
-                             ;; MAY FAIL WITH BUSY.  Should we rollback?
-                             (commit db)
+                             (commit db)  ; maybe warn on #f
                              rv)))))
                (or rv
                    (if (rollback db)
@@ -780,4 +772,4 @@ int busy_notification_handler(void *ctx, int times) {
                        (thread-sleep!/ms delay)
                        #t))))))))))
 
-  )
+  )  ; module
