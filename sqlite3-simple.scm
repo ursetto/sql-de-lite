@@ -32,11 +32,9 @@ int busy_notification_handler(void *ctx, int times) {
   ;;    error-code error-message
   ;;    open-database close-database
   ;;    prepare prepare-transient
-  ;;    execute execute-sql
+  ;;    finalize step ; step-through
   ;;    fetch fetch-alist
-  ;;    fetch-all                            ; ?
-  ;;    raise-database-error
-  ;;    finalize step                        ; step-through
+  ;;    fetch-all
   ;;    column-count column-name column-type column-data
   ;;    column-names                         ; convenience
   ;;    bind bind-parameters bind-parameter-count
@@ -44,7 +42,6 @@ int busy_notification_handler(void *ctx, int times) {
   ;;    row-data row-alist
   ;;    reset                                ; core binding!
   ;;    call-with-database
-  ;;    call-with-prepared-statement call-with-prepared-statements
   ;;    change-count total-change-count last-insert-rowid
   ;;    with-transaction with-deferred-transaction
   ;;    with-immediate-transaction with-exclusive-transaction
@@ -52,7 +49,6 @@ int busy_notification_handler(void *ctx, int times) {
   ;;    rollback commit
 
   ;;    set-busy-handler! busy-timeout
-  ;;    retry-busy? reset-busy!              ; internal
 
   ;;    ;; advanced interface
   ;;    query query* exec exec* sql
@@ -65,9 +61,6 @@ int busy_notification_handler(void *ctx, int times) {
   ;;    for-each-row for-each-row*
   ;;    map-rows map-rows*
   ;;    fold-rows fold-rows*
-  ;;    query-for-each query-for-each*
-  ;;    query-map query-map*
-  ;;    query-fold query-fold*
                 
   ;;    )
 
@@ -244,7 +237,9 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Calls (proc s) and resets the statement immediately afterward, to
   ;; avoid locking the database.  If an exception occurs during proc,
   ;; the statement will still be reset.  Statement is NOT reset before
-  ;; execution.
+  ;; execution.  Note that, as closing the database will also reset any
+  ;; pending statements, you can dispense with the unwind-protect as long
+  ;; as you don't attempt to continue.
   (define (query* proc s)
     ;; (when (or (not (statement? s)) ; Optional check before entering
     ;;           (finalized? s))      ; exception handler.
@@ -270,7 +265,10 @@ int busy_notification_handler(void *ctx, int times) {
   ;; result set has no columns as in INSERT, DELETE) or the first row (if
   ;; column data is returned as in SELECT).  Resurrection is omitted, as it
   ;; would wipe out any bindings.  Reset is NOT done beforehand.
-  ;; Reset is done afterward only if a row was returned.
+  ;; Reset afterward is not guaranteed; it is done only if a row
+  ;; was returned and fetch did not throw an error.  An error in step
+  ;; should not leave the statement open, but an error in retrieving column
+  ;; data will (such as a string > 16MB)--this is a flaw.
   (define (exec* s)
     (and-let* ((v (fetch s)))
       (when (pair? v) (reset s))
