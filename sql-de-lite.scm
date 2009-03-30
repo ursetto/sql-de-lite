@@ -1,5 +1,23 @@
 ;;; simple sqlite3 interface
 
+;; TODO: running statements should be tracked, so as not to call
+;; reset when unnecessary.  We avoid that now at the cost of
+;; correctness; for example, query* doesn't reset.  And pulling a
+;; cached statement out of the cache always resets, even when it
+;; is not running.  It also means we could detect when users try
+;; to use cached statements that are already running; we could detect
+;; this in (prepare) when a statement is pulled out of the cache,
+;; or we could detect it in (query); for correct behavior, we should
+;; really detect it in (prepare) so that (step) behaves correctly.
+;; It is not clear whether to warn and reset in this case (perhaps
+;; a user accidentally left a query open) or error out.  Note that
+;; it's impossible to prevent dual use of a query completely; if
+;; you prepare two copies of the same statement ahead of time, you
+;; can still step both copies, which actually refer to the same statement.
+;; WARNING: "reset" is different from "done" -- a statement could
+;; have (running?) => #t and not be reset.  This is critically important
+;; distinction in STEP.
+
 ;; This type of query need only be stepped once, after which
 ;; it will return DONE.
 ;; => "INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;"
@@ -54,6 +72,8 @@ int busy_notification_handler(void *ctx, int times) {
      for-each-row for-each-row*
      map-rows map-rows*
      fold-rows fold-rows*
+
+     finalized?
                 
      )
 
@@ -170,14 +190,16 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Internal record making up the guts of a prepared statement;
   ;; always embedded in a sqlite-statement.
   (define-record-type sqlite-statement-handle
-    (make-handle ptr column-count column-names parameter-count cached?)
+    (make-handle ptr column-count column-names
+                 parameter-count cached? run-state)
     handle?
-    (ptr handle-ptr set-handle-ptr!)    
+    (ptr handle-ptr set-handle-ptr!)
     (column-count handle-column-count)
     (column-names handle-column-names)
     (parameter-count handle-parameter-count)
     ;; cached? flag avoids a cache-ref to check existence.
-    (cached? handle-cached? set-handle-cached!))
+    (cached? handle-cached? set-handle-cached!)
+    (run-state handle-run-state set-handle-run-state!))
 
   ;; Convenience accessors for guts of statement.  Should be inlined.
   (define (statement-ptr s)
@@ -194,6 +216,10 @@ int busy_notification_handler(void *ctx, int times) {
     (handle-cached? (statement-handle s)))
   (define (set-statement-cached! s b)
     (set-handle-cached! (statement-handle s) b))
+  (define (statement-run-state s)
+    (handle-run-state (statement-handle s)))
+  (define (set-statement-run-state! s b)
+    (set-handle-run-state! (statement-handle s) b))
 
   (define-inline (nonnull-statement-ptr stmt)
     ;; All references to statement ptr implicitly check for valid db.
@@ -344,7 +370,7 @@ int busy_notification_handler(void *ctx, int times) {
                             (nparam (sqlite3_bind_parameter_count stmt))
                             (names (make-vector ncol #f)))
                        (make-handle stmt ncol names nparam
-                                    #f)) ; cached
+                                    #f #f)) ; cached? run-state
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
                  (let ((bh (db-busy-handler db)))
@@ -391,7 +417,9 @@ int busy_notification_handler(void *ctx, int times) {
       (let retry ((times 0))
         (reset-busy! db)
         (let ((rv (sqlite3_step (nonnull-statement-ptr stmt))))
-          (cond ((= rv status/row) 'row)
+          (cond ((= rv status/row)
+                 (set-statement-run-state! stmt 'running)
+                 'row)
                 ((= rv status/done) 'done)
                 ((= rv status/misuse) ;; Error code/msg may not be set! :(
                  (reset stmt)
@@ -438,8 +466,13 @@ int busy_notification_handler(void *ctx, int times) {
   ;; sqlite3_reset only returns an error if the statement experienced
   ;; an error, for compatibility with sqlite3_prepare.  We get the
   ;; error from sqlite3_step, so ignore any error here.
-  (define (reset stmt)                  ; duplicates core binding
+  (define (reset stmt)
+    (when (statement-run-state stmt)
+      (reset-unconditionally stmt))
+    stmt)
+  (define (reset-unconditionally stmt)
     (sqlite3_reset (nonnull-statement-ptr stmt))
+    (set-statement-run-state! stmt #f)
     stmt)
 
   (define (bind-parameters stmt . params)
