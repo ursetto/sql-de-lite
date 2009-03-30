@@ -503,11 +503,19 @@ int busy_notification_handler(void *ctx, int times) {
              (loop (+ i 1) (cdr p)))
             (else #f))))
 
-  (define (bind-named-parameters stmt . kvs)
-    (error 'bind-name-parameters "unimplemented"))
+  (define (bind s i x)
+    (if (string? i)
+        (%bind-named s i x)
+        (%bind-int s i x)))
 
-  ;; 
-  (define (bind stmt i x)
+  (define (%bind-named s n x)
+    (##sys#check-string n 'bind-named)
+    (let ((i (sqlite3_bind_parameter_index (nonnull-statement-ptr s) n)))
+      (if (= i 0)
+          (error 'bind-named "no such parameter name" n s)
+          (%bind-int s i x))))
+
+  (define (%bind-int stmt i x)
     (when (or (< i 1)
               (> i (bind-parameter-count stmt)))
       ;; Should we test for this (and treat as error)?
