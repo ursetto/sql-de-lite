@@ -384,14 +384,21 @@ int busy_notification_handler(void *ctx, int times) {
                  (database-error db 'prepare sql)))))))
 
   ;; Looks up a prepared statement in the statement cache.  If not
-  ;; found, it prepares a statement and caches it.  Statements pulled
-  ;; from cache are reset so that all statements prepared by this
-  ;; interface are at the beginning of their program.  Statements are
-  ;; also marked as cached, so FINALIZE is a no-op.
+  ;; found, it prepares a statement and caches it.  An exception is
+  ;; thrown if a statement we pulled from cache is currently running
+  ;; (we could just warn and reset, if this causes problems).
+  ;; Statements are also marked as cached, so FINALIZE is a no-op.
   (define (prepare db sql)
     (let ((c (db-statement-cache db)))
       (cond ((lru-cache-ref c sql)
-             => reset)  ; Cache hit -should- imply non-finalized
+             => (lambda (s)
+                  (case (statement-run-state s)
+                    ((running)
+                     (error 'prepare
+                            "cached statement is currently executing" s))
+                    ((done)
+                     (reset s))
+                    (else s))))
             ((prepare-handle db sql)
              => (lambda (h)
                   (let ((s (make-statement db sql h)))
@@ -497,7 +504,7 @@ int busy_notification_handler(void *ctx, int times) {
             (else #f))))
 
   (define (bind-named-parameters stmt . kvs)
-    (void))
+    (error 'bind-name-parameters "unimplemented"))
 
   ;; 
   (define (bind stmt i x)
