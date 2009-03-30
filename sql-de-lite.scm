@@ -503,6 +503,10 @@ int busy_notification_handler(void *ctx, int times) {
              (loop (+ i 1) (cdr p)))
             (else #f))))
 
+  ;; Bind parameter at index I of statement S to value X.  The variable
+  ;; I may be an integer (the first parameter is 1, not 0) or a string
+  ;; for a named parameter -- for example, "$key", ":key" or "@key".
+  ;; A reference to an invalid index will throw an exception.
   (define (bind s i x)
     (if (string? i)
         (%bind-named s i x)
