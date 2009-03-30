@@ -494,14 +494,11 @@ int busy_notification_handler(void *ctx, int times) {
       ;; with wrong arity, so perhaps it should error out.
       (unless (= (length params) count)
         (error 'bind-parameters "wrong number of parameters, expected" count))
-      (apply bind-some-parameters stmt 1 params)))
-
-  (define (bind-some-parameters stmt offset . params)
-    (let loop ((i offset) (p params))
-      (cond ((null? p) stmt)
-            ((bind stmt i (car p))
-             (loop (+ i 1) (cdr p)))
-            (else #f))))
+      (let loop ((i 1) (p params))
+        (cond ((null? p) stmt)
+              ((bind stmt i (car p))
+               (loop (+ i 1) (cdr p)))
+              (else #f)))))
 
   ;; Bind parameter at index I of statement S to value X.  The variable
   ;; I may be an integer (the first parameter is 1, not 0) or a string
