@@ -283,7 +283,8 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Executes statement s, returning the number of changes (if the
   ;; result set has no columns as in INSERT, DELETE) or the first row (if
   ;; column data is returned as in SELECT).  Resurrection is omitted, as it
-  ;; would wipe out any bindings.  Reset is NOT done beforehand.
+  ;; would wipe out any bindings.  Reset is NOT done beforehand; it is cheap,
+  ;; but the user must reset before a bind anyway.
   ;; Reset afterward is not guaranteed; it is done only if a row
   ;; was returned and fetch did not throw an error.  An error in step
   ;; should not leave the statement open, but an error in retrieving column
@@ -552,18 +553,19 @@ int busy_notification_handler(void *ctx, int times) {
     ;; can't be cached, only valid for current row
     (int->type (sqlite3_column_type (nonnull-statement-ptr stmt) i)))
   (define (column-data stmt i)
-    (let ((stmt-ptr (nonnull-statement-ptr stmt)))
-      (case (column-type stmt i)
-        ;; INTEGER type may reach 64 bits; return at least 53 significant.
-        ((integer) (sqlite3_column_int64 stmt-ptr i))
-        ((float)   (sqlite3_column_double stmt-ptr i))
-        ((text)    (sqlite3_column_text stmt-ptr i)) ; WARNING: NULs allowed??
-        ((blob)    (let ((b (make-blob (sqlite3_column_bytes stmt-ptr i)))
-                         (%copy! (foreign-lambda c-pointer "C_memcpy"
-                                                 scheme-pointer c-pointer int)))
-                     (%copy! b (sqlite3_column_blob stmt-ptr i) (blob-size b))
-                     b))
-        ((null)    '())
+    (let* ((stmt-ptr (nonnull-statement-ptr stmt))
+           (t (sqlite3_column_type stmt-ptr i)))  ; faster than column-type
+      ;; INTEGER type may reach 64 bits; return at least 53 significant.      
+      (cond ((= t type/integer) (sqlite3_column_int64 stmt-ptr i))
+            ((= t type/float)   (sqlite3_column_double stmt-ptr i))
+            ((= t type/text)    (sqlite3_column_text stmt-ptr i)) ; NULs OK??
+            ((= t type/null)    '())
+            ((= t type/blob)
+             (let ((b (make-blob (sqlite3_column_bytes stmt-ptr i)))
+                   (%copy! (foreign-lambda c-pointer "C_memcpy"
+                                           scheme-pointer c-pointer int)))
+               (%copy! b (sqlite3_column_blob stmt-ptr i) (blob-size b))
+               b))
         (else
          (error 'column-data "illegal type"))))) ; assertion
 
