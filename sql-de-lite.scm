@@ -418,11 +418,14 @@ int busy_notification_handler(void *ctx, int times) {
         (reset-busy! db)
         (let ((rv (sqlite3_step (nonnull-statement-ptr stmt))))
           (cond ((= rv status/row)
-                 (set-statement-run-state! stmt 'running)
+                 (unless (statement-run-state stmt)
+                   (set-statement-run-state! stmt 'running))
                  'row)
-                ((= rv status/done) 'done)
+                ((= rv status/done)
+                 (set-statement-run-state! stmt 'done)
+                 'done)
                 ((= rv status/misuse) ;; Error code/msg may not be set! :(
-                 (reset stmt)
+                 (reset-unconditionally stmt)
                  (error 'step "misuse of interface"))
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
@@ -433,7 +436,7 @@ int busy_notification_handler(void *ctx, int times) {
                        (retry (+ times 1))
                        (database-error db 'step stmt))))
                 (else
-                 (reset stmt)
+                 (reset-unconditionally stmt)
                  (database-error db 'step stmt)))))))
 
   ;; Finalize a statement.  Finalizing a finalized statement or a
