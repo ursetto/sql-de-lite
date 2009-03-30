@@ -1,23 +1,5 @@
 ;;; simple sqlite3 interface
 
-;; TODO: running statements should be tracked, so as not to call
-;; reset when unnecessary.  We avoid that now at the cost of
-;; correctness; for example, query* doesn't reset.  And pulling a
-;; cached statement out of the cache always resets, even when it
-;; is not running.  It also means we could detect when users try
-;; to use cached statements that are already running; we could detect
-;; this in (prepare) when a statement is pulled out of the cache,
-;; or we could detect it in (query); for correct behavior, we should
-;; really detect it in (prepare) so that (step) behaves correctly.
-;; It is not clear whether to warn and reset in this case (perhaps
-;; a user accidentally left a query open) or error out.  Note that
-;; it's impossible to prevent dual use of a query completely; if
-;; you prepare two copies of the same statement ahead of time, you
-;; can still step both copies, which actually refer to the same statement.
-;; WARNING: "reset" is different from "done" -- a statement could
-;; have (running?) => #t and not be reset.  This is critically important
-;; distinction in STEP.
-
 ;; This type of query need only be stepped once, after which
 ;; it will return DONE.
 ;; => "INSERT INTO attached_db.temp_table SELECT * FROM attached_db.table1;"
@@ -238,19 +220,20 @@ int busy_notification_handler(void *ctx, int times) {
     (make-statement db sql-str #f))     ; (finalized? s) => #t
   
   ;; Resurrects finalized statement s or, if still live, just resets it.
-  (define (resurrect! s)                ; inline
+  ;; Returns s, which is also modified in place.
+  (define (resurrect s)                ; inline
     (cond ((finalized? s)
            (let ((sn (prepare (statement-db s) (statement-sql s))))
-             (set-statement-handle! s (statement-handle sn))))
+             (set-statement-handle! s (statement-handle sn))
+             s))
           (else
-           (reset s)
-           (void))))
+           (reset s))))
 
   ;; Resurrects s, binds args to s and performs a query*.  This is the
   ;; usual way to perform a query unless you need to bind arguments
   ;; manually or need other manual control.
   (define (query proc s . args)
-    (resurrect! s)
+    (resurrect s)
     (and (apply bind-parameters s args)
          (query* proc s)))
   ;; Calls (proc s) and resets the statement immediately afterward, to
@@ -277,7 +260,7 @@ int busy_notification_handler(void *ctx, int times) {
 
   ;; Resurrects s, binds args to s and performs an exec*.
   (define (exec s . args)
-    (resurrect! s)
+    (resurrect s)
     (and (apply bind-parameters s args)
          (exec* s)))
   ;; Executes statement s, returning the number of changes (if the
