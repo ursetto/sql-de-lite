@@ -33,7 +33,7 @@ int busy_notification_handler(void *ctx, int times) {
      bind bind-parameters bind-parameter-count
      library-version                      ; string, not proc
      row-data row-alist
-     reset                                ; core binding!
+     reset ;reset-unconditionally         ; core binding!
      call-with-database
      change-count total-change-count last-insert-rowid
      with-transaction with-deferred-transaction
@@ -54,6 +54,8 @@ int busy_notification_handler(void *ctx, int times) {
      for-each-row for-each-row*
      map-rows map-rows*
      fold-rows fold-rows*
+     schema print-schema
+     flush-cache!
 
      finalized?
                 
@@ -332,6 +334,9 @@ int busy_notification_handler(void *ctx, int times) {
   (define (schema db)
     (query (map-rows car)
            (sql db "select sql from sqlite_master where sql not NULL;")))
+
+  (define (flush-cache! db)
+    (lru-cache-flush! (db-statement-cache db)))
 
 ;;; Lowlevel interface
 
