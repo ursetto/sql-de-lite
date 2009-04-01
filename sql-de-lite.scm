@@ -65,7 +65,8 @@ int busy_notification_handler(void *ctx, int times) {
           (except chicken reset))
   (import (only extras fprintf sprintf))
   (require-library lolevel srfi-18)
-  (import (only lolevel object->pointer object-release object-evict))
+  (import (only lolevel
+                object->pointer object-release object-evict pointer=?))
   (import (only data-structures alist-ref))
   (import (only srfi-18 thread-sleep! milliseconds->time))
   (import foreign foreigners easyffi)
@@ -731,30 +732,46 @@ int busy_notification_handler(void *ctx, int times) {
   (define (autocommit? db)
     (sqlite3_get_autocommit (nonnull-db-ptr db)))
 
-  ;; Rollback current transaction.  Reset pending statements before
-  ;; doing so; rollback will fail if queries are running.  Resetting
-  ;; only open queries would be nicer, but we don't track them (yet).
-  ;; Rolling back when no transaction is active returns #t.
+  ;; Rollback current transaction.  Reset running queries before doing
+  ;; so, as rollback would fail if read or read/write queries are
+  ;; running.  Rolling back when no transaction is active returns #t.
   (define (rollback db)
     (cond ((autocommit? db) #t)
           (else
            (reset-running-queries! db)
            (exec (sql db "rollback;")))))
-  ;; Same behavior as rollback.
+  ;; Commit current transaction.  This does not roll back running queries,
+  ;; because running read queries are acceptable, and the behavior in the
+  ;; presence of pending write statements is unclear.  If the commit
+  ;; fails, you can always rollback, which will reset the pending queries.
   (define (commit db)
     (cond ((autocommit? db) #t)
           (else
-           (reset-running-queries! db)
+           ;; (reset-running-queries! db)
            (exec (sql db "commit;")))))
+  ;; Reset all running queries.  A list of all prepared statements known
+  ;; to the library is obtained; if a statement is found in the cache,
+  ;; we call (reset) on it.  If it is not, it is a transient statement,
+  ;; which we do not track; forcibly reset it as its run state is unknown.
+  ;; Statements that fall off the cache have been finalized and are
+  ;; consequently not known to the library.
   (define (reset-running-queries! db)
-    (let ((db-ptr (nonnull-db-ptr db)))
-      (do ((stmt (sqlite3_next_stmt db-ptr #f)
-                 (sqlite3_next_stmt db-ptr stmt)))
-          ((not stmt))
-        (warning (sprintf "resetting pending statement: ~S"
-                          (sqlite3_sql stmt)))
-        (sqlite3_reset stmt))))
-  
+    (let ((db-ptr (nonnull-db-ptr db))
+          (c (db-statement-cache db)))
+      (do ((sptr (sqlite3_next_stmt db-ptr #f)
+                 (sqlite3_next_stmt db-ptr sptr)))
+          ((not sptr))
+        (let* ((sql (sqlite3_sql sptr))
+               (s (lru-cache-ref c sql)))
+          (if (and s
+                   (pointer=? (statement-ptr s) sptr))
+              (reset s)
+              (begin
+                (fprintf
+                 (current-error-port)
+                 "Warning: resetting transient prepared statement: ~S\n" sql)
+                (sqlite3_reset sptr)))))))
+
 ;;; Busy handling
 
   ;; Busy handling is done entirely in the application, as with SRFI-18

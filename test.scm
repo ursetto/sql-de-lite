@@ -70,7 +70,7 @@
 
 (test-group
  "rollback"
- (test-error "Open queries prevent SQL ROLLBACK"     ; will throw SQLITE_BUSY
+ (test-error "Open read queries prevent SQL ROLLBACK" ; will throw SQLITE_BUSY
              (call-with-database ":memory:"
                (lambda (db)
                  (exec (sql db "begin;"))
@@ -78,7 +78,17 @@
                              (fetch (prepare db "select 1 union select 2")))
                      (error 'fetch "fetch failed during test"))
                  (exec (sql db "rollback;")))))
- (test "(rollback) resets open queries"
+ (test "Open read queries ok with SQL COMMIT"
+       #t
+       (call-with-database ":memory:"
+         (lambda (db)
+           (exec (sql db "begin;"))
+           (or (equal? '(1)
+                       (fetch (prepare db "select 1 union select 2")))
+               (error 'fetch "fetch failed during test"))
+           (exec (sql db "commit;"))
+           #t)))
+ (test "(rollback) resets open cached queries"
        0
        ;; We assume reset worked if no error; should we explicitly test it?
        (call-with-database ":memory:"
@@ -86,6 +96,16 @@
            (exec (sql db "begin;"))
            (or (equal? '(1)
                        (fetch (prepare db "select 1 union select 2")))
+               (error 'fetch "fetch failed during test"))
+           (rollback db))))
+ (test "(rollback) resets open transient queries (and warns)"
+       0
+       (call-with-database ":memory:"
+         (lambda (db)
+           (exec (sql db "begin;"))
+           (or (equal? '(1)
+                       (fetch (prepare-transient db
+                                                 "select 1 union select 2")))
                (error 'fetch "fetch failed during test"))
            (rollback db))))
  (test "with-transaction rollback resets open queries"
