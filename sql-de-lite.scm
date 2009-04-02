@@ -66,7 +66,6 @@ int busy_notification_handler(void *ctx, int times) {
   (import (only data-structures alist-ref))
   (import (only srfi-18 thread-sleep! milliseconds->time))
   (import foreign foreigners easyffi)
-  (require-extension matchable)
   (require-extension lru-cache)
 
 ;;; Foreign interface
@@ -610,10 +609,13 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Fetch remaining rows into a list.
   (define (fetch-all s)
     (let loop ((L '()))
-      (match (fetch s)
-             (() (reverse L))
-             (#f (raise-database-error (statement-db s) 'fetch-all))
-             (p  (loop (cons p L))))))
+      (let ((row (fetch s)))
+        (cond ((null? row)
+               (reverse L))
+              (row
+               (loop (cons row L)))
+              (else
+               (raise-database-error (statement-db s) 'fetch-all))))))
 
 ;;   (define (step-through stmt)
 ;;     (let loop ()
