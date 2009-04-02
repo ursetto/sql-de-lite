@@ -1,0 +1,7 @@
+((egg "sql-de-lite.egg")
+ (synopsis "SQLite 3 interface")
+ (author "Jim Ursetto")
+ (category db)
+ (license "BSD")
+ (doc-from-wiki)
+ (files "sql-de-lite.scm" "sql-de-lite.setup" "sql-de-lite.html"))
