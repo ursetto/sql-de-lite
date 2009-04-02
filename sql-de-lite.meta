@@ -4,5 +4,5 @@
  (category db)
  (license "BSD")
  (doc-from-wiki)
- (needs lru-cache foreigners)
+ (needs lru-cache foreigners easyffi)
  (files "sql-de-lite.scm" "sql-de-lite.setup" "sql-de-lite.html"))
