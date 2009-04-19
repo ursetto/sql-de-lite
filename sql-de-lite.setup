@@ -3,4 +3,4 @@
 (install-extension
  'sql-de-lite 
  '("sql-de-lite.so" "sql-de-lite.import.so")
- '((version 0.3)))
+ '((version "0.3.1")))
