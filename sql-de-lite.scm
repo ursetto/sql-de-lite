@@ -23,7 +23,7 @@ int busy_notification_handler(void *ctx, int times) {
      prepare prepare-transient
      finalize step ; step-through
      fetch fetch-alist
-     fetch-all
+     fetch-all first-column
      column-count column-name column-type column-data
      column-names                         ; convenience
      bind bind-parameters bind-parameter-count
@@ -330,7 +330,8 @@ int busy_notification_handler(void *ctx, int times) {
   (define (schema db)
     (query (map-rows car)
            (sql db "select sql from sqlite_master where sql not NULL;")))
-
+  (define (first-column row)
+    (and (pair? row) (car row)))
   (define (flush-cache! db)
     (lru-cache-flush! (db-statement-cache db)))
 
