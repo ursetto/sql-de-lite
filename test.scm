@@ -409,7 +409,7 @@
            (let ((s (prepare db1 "select * from c;"))
                  (ic (prepare db2 "insert into c(k,v) values(?,?);"))
                  (iq (prepare db2 "insert into q(k,v) values(?,?);")))
-             (step s)
+             (test "start step in db1" '("foo" "bar") (fetch s))
              ;; now the tests
              (test "insert in db2 during executing read in db1 returns busy"
                    'busy
@@ -420,6 +420,28 @@
                    'busy
                    (sqlite-exception-status
                     (handle-exceptions e e (exec iq "phlegm" "snot"))))
+             ;; This should -not- work -- something is wrong
+             ;; Note that if you execute ic BEFORE iq, it WILL return busy
+             (test "insert in db2 during executing read in db1 returns busy"
+                   'busy
+                   (sqlite-exception-status
+                    (handle-exceptions e e (exec ic "hyper" "meta"))))
+             (test "another step in db1"
+                   '("baz" "quux")
+                   (fetch s))
+             (test "another step in db1" '() (fetch s))
+             ;; And once s completed, we can't restart it; database is locked.
+             ;; It seems we must reset iq, even though it never wrote
+             ;; to the disk.  It must be that iq acquired a PENDING lock
+             ;; and, once the read lock is dropped, no new read locks
+             ;; may be acquired until iq is reset.  The BUSY error must
+             ;; have occurred when iq attempted to escalate to EXCLUSIVE
+             ;; during its auto-commit.
+             (test "reset and restep read in db1"
+                   '("foo" "bar")
+                   (begin (reset s)
+                          (fetch s)))
+
              )
 
            

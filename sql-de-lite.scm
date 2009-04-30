@@ -792,7 +792,7 @@ int busy_notification_handler(void *ctx, int times) {
                (s (lru-cache-ref c sql)))
           (if (and s
                    (pointer=? (statement-ptr s) sptr))
-              (reset s)
+              (reset-unconditionally s)   ; in case our state is out of sync
               (begin
                 (fprintf
                  (current-error-port)
