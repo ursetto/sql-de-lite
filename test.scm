@@ -443,7 +443,7 @@
                    (sqlite-exception-status
                     (handle-exceptions e e (reset s) (fetch s))))
 
-             (test "reset and query* fetch in s, expect BUSY, plus reset of s"
+             (test "reset and query* fetch in s, expect BUSY, plus s should be reset by query*"
                    'busy
                    (begin
                      (reset s)

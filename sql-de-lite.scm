@@ -258,11 +258,11 @@ int busy_notification_handler(void *ctx, int times) {
     (begin0
         (let ((c (current-exception-handler)))
           (with-exception-handler
-           (lambda (ex)  ; careful not to throw another exception in here
-             (when (statement? s)
-               (and-let* ((h (statement-handle s))
-                          (ptr (handle-ptr h)))
-                 (sqlite3_reset ptr)))
+           (lambda (ex)    ; careful not to throw another exception in here
+             (and-let* ((statement? s)
+                        (h (statement-handle s)) ; is this too paranoid?
+                        (handle-ptr h))
+               (reset-unconditionally s))
              (c ex))
            (lambda () (proc s))))
         (reset s)))
