@@ -16,46 +16,47 @@ int busy_notification_handler(void *ctx, int times) {
 ;;; Module definition
 
 (module sql-de-lite
-;;  *
-    (
-     error-code error-message
-     open-database close-database
-     prepare prepare-transient
-     finalize step ; step-through
-     fetch fetch-alist
-     fetch-all first-column
-     column-count column-name column-type column-data
-     column-names                         ; convenience
-     bind bind-parameters bind-parameter-count
-     library-version                      ; string, not proc
-     row-data row-alist
-     reset ;reset-unconditionally         ; core binding!
-     call-with-database
-     change-count total-change-count last-insert-rowid
-     with-transaction with-deferred-transaction
-     with-immediate-transaction with-exclusive-transaction
-     autocommit?
-     rollback commit
+  *
+;;   (
+;;      error-code error-message
+;;      open-database close-database
+;;      prepare prepare-transient
+;;      finalize resurrect
+;;      step ; step-through
+;;      fetch fetch-alist
+;;      fetch-all first-column
+;;      column-count column-name column-type column-data
+;;      column-names                         ; convenience
+;;      bind bind-parameters bind-parameter-count
+;;      library-version                      ; string, not proc
+;;      row-data row-alist
+;;      reset ;reset-unconditionally         ; core binding!
+;;      call-with-database
+;;      change-count total-change-count last-insert-rowid
+;;      with-transaction with-deferred-transaction
+;;      with-immediate-transaction with-exclusive-transaction
+;;      autocommit?
+;;      rollback commit
 
-     set-busy-handler! busy-timeout
+;;      set-busy-handler! busy-timeout
 
-     ;; advanced interface
-     query query* exec exec* sql
+;;      ;; advanced interface
+;;      query query* exec exec* sql
 
-     ;; parameters
-     raise-database-errors
-     prepared-cache-size
+;;      ;; parameters
+;;      raise-database-errors
+;;      prepared-cache-size
    
-     ;; experimental interface
-     for-each-row for-each-row*
-     map-rows map-rows*
-     fold-rows fold-rows*
-     schema print-schema
-     flush-cache!
+;;      ;; experimental interface
+;;      for-each-row for-each-row*
+;;      map-rows map-rows*
+;;      fold-rows fold-rows*
+;;      schema print-schema
+;;      flush-cache!
 
-     finalized?
+;;      finalized?
                 
-     )
+;;      )
 
   (import scheme
           (except chicken reset))
@@ -430,6 +431,7 @@ int busy_notification_handler(void *ctx, int times) {
                  (error 'step "misuse of interface"))
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
+                 (set-statement-running! stmt)
                  (let ((bh (db-busy-handler db)))
                    (if (and bh
                             (retry-busy? db)
