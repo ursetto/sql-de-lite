@@ -281,6 +281,13 @@ int busy_notification_handler(void *ctx, int times) {
   ;; was returned and fetch did not throw an error.  An error in step
   ;; should not leave the statement open, but an error in retrieving column
   ;; data will (such as a string > 16MB)--this is a flaw.
+
+  ;; FIXME: Ultimately it looks like we will need to unwind-protect
+  ;; a reset here.  If a BUSY occurs on a write, a pending lock may
+  ;; be held, stopping further reads until this is reset.  It is unknown
+  ;; if this also happens for read busies, nor if any other error may
+  ;; cause this problem.  It is unknown if we can safely just reset on
+  ;; a BUSY in step, rather than catching it here.
   (define (exec* s)
     (and-let* ((v (fetch s)))
       (when (pair? v) (reset s))

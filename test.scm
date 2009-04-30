@@ -422,6 +422,7 @@
                     (handle-exceptions e e (exec iq "phlegm" "snot"))))
              ;; This should -not- work -- something is wrong
              ;; Note that if you execute ic BEFORE iq, it WILL return busy
+             ;; I cannot fathom why this happens
              (test "insert in db2 during executing read in db1 returns busy"
                    'busy
                    (sqlite-exception-status
@@ -436,16 +437,33 @@
              ;; and, once the read lock is dropped, no new read locks
              ;; may be acquired until iq is reset.  The BUSY error must
              ;; have occurred when iq attempted to escalate to EXCLUSIVE
-             ;; during its auto-commit.
-             (test "reset and restep read in db1"
+             ;; during its auto-commit.  How to handle this?
+             (test "reset and restep read in db1, returns BUSY due to pending insert"
+                   'busy
+                   (sqlite-exception-status
+                    (handle-exceptions e e (reset s) (fetch s))))
+
+             (test "reset and query* fetch in s, expect BUSY, plus reset of s"
+                   'busy
+                   (begin
+                     (reset s)
+                     (sqlite-exception-status
+                      (handle-exceptions e e (query* fetch s)))))
+
+             ;; FAILS
+             (test "verify s was reset (i.e. we can re-prepare s) after the BUSY error in query*"
+                   #t
+                   (begin
+                          (prepare db1 "select * from c;")
+                          #t))
+             
+             (test "close open db2 write, reset and restep read in db1"
                    '("foo" "bar")
-                   (begin (reset s)
+                   (begin (reset iq)
+                          (reset s)
                           (fetch s)))
 
-             )
-
-           
-           ))))
+           )))))
    (delete-file db-name)))
 
 ;;; Future tests
