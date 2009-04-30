@@ -702,7 +702,20 @@ int busy_notification_handler(void *ctx, int times) {
     (and (raise-database-errors)
          (apply raise-database-error db where args)))
   (define (raise-database-error db where . args)
-    (apply error where (error-message db) args))
+    (let ((db-message (error-message db)))
+      (abort
+       (make-composite-condition
+        (make-property-condition 'exn
+                                 'location where
+                                 'message db-message
+                                 'arguments args)
+        (make-property-condition 'sqlite
+                                 'status (error-code db)
+                                 'message db-message)))))
+  (define sqlite-exception? (condition-predicate 'sqlite))
+  ;; note that these will return #f if you pass it a non-sqlite condition
+  (define sqlite-exception-status (condition-property-accessor 'sqlite 'status))
+  (define sqlite-exception-message (condition-property-accessor 'sqlite 'message))
 
 ;;; Transactions
 
@@ -722,7 +735,7 @@ int busy_notification_handler(void *ctx, int times) {
                     (handle-exceptions ex (begin (or (rollback db)
                                                      (error 'with-transaction
                                                             "rollback failed"))
-                                                 (signal ex))
+                                                 (abort ex))
                       (let ((rv (thunk))) ; only 1 return value allowed
                         (and rv
                              (commit db)  ; maybe warn on #f

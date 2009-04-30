@@ -1,5 +1,7 @@
 (use test)
 (use sql-de-lite)
+(use files) ; create-temporary-file
+(use posix) ; delete-file
 
 ;; Concatenate string literals into a single literal at compile time.
 ;; (string-literal "a" "b" "c") -> "abc"
@@ -392,6 +394,36 @@
              `(,rowid "jimmy" "dunno")
              (exec (sql db "select rowid, * from cache where rowid = ?;")
                    rowid))))))
+
+(test-group
+ "multiple connections"
+ (let ((db-name (create-temporary-file "db")))
+   (call-with-database db-name
+     (lambda (db1)
+       (call-with-database db-name
+         (lambda (db2)
+           (exec (sql db1 "create table c(k,v);"))
+           (exec (sql db1 "create table q(k,v);"))
+           (exec (sql db1 "insert into c(k,v) values(?,?);") "foo" "bar")
+           (exec (sql db1 "insert into c(k,v) values(?,?);") "baz" "quux")
+           (let ((s (prepare db1 "select * from c;"))
+                 (ic (prepare db2 "insert into c(k,v) values(?,?);"))
+                 (iq (prepare db2 "insert into q(k,v) values(?,?);")))
+             (step s)
+             ;; now the tests
+             (test "insert in db2 during executing read in db1 returns busy"
+                   'busy
+                   (sqlite-exception-status
+                    (handle-exceptions e e (exec iq "phlegm" "snot"))))
+             (test "retry the busy insert, expecting busy again" ; ensure statement is reset properly
+                   'busy
+                   (sqlite-exception-status
+                    (handle-exceptions e e (exec iq "phlegm" "snot"))))
+             )
+
+           
+           ))))
+   (delete-file db-name)))
 
 ;;; Future tests
 
