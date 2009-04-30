@@ -415,7 +415,8 @@
                    'busy
                    (sqlite-exception-status
                     (handle-exceptions e e (exec iq "phlegm" "snot"))))
-             (test "retry the busy insert, expecting busy again" ; ensure statement is reset properly
+             (test "retry the busy insert, expecting busy again"
+                   ;; ensure statement is reset properly; if not, we will get a bind error
                    'busy
                    (sqlite-exception-status
                     (handle-exceptions e e (exec iq "phlegm" "snot"))))

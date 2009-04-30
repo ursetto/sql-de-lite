@@ -375,9 +375,9 @@ int busy_notification_handler(void *ctx, int times) {
                             (retry-busy? db)
                             (bh db times))
                        (retry (+ times 1))
-                       (database-error db 'prepare sql))))
+                       (database-error db rv 'prepare sql))))
                 (else
-                 (database-error db 'prepare sql)))))))
+                 (database-error db rv 'prepare sql)))))))
 
   ;; Looks up a prepared statement in the statement cache.  If not
   ;; found, it prepares a statement and caches it.  An exception is
@@ -426,9 +426,6 @@ int busy_notification_handler(void *ctx, int times) {
                 ((= rv status/done)
                  (set-statement-done! stmt)
                  'done)
-                ((= rv status/misuse) ;; Error code/msg may not be set! :(
-                 (reset-unconditionally stmt)
-                 (error 'step "misuse of interface"))
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
                  (set-statement-running! stmt)
@@ -437,10 +434,10 @@ int busy_notification_handler(void *ctx, int times) {
                             (retry-busy? db)
                             (bh db times))
                        (retry (+ times 1))
-                       (database-error db 'step stmt))))
+                       (database-error db rv 'step stmt))))
                 (else
                  (reset-unconditionally stmt)
-                 (database-error db 'step stmt)))))))
+                 (database-error db rv 'step stmt)))))))
 
   ;; Finalize a statement.  Finalizing a finalized statement or a
   ;; cached statement is a no-op.  Finalizing a statement on a closed
@@ -463,9 +460,7 @@ int busy_notification_handler(void *ctx, int times) {
           (set-statement-ptr! stmt #f)
           (cond ((= rv status/abort)
                  (database-error
-                  (statement-db stmt) 'finalize))
-                ((= rv status/misuse)
-                 (error 'finalize "misuse of interface"))
+                  (statement-db stmt) rv 'finalize))
                 (else #t)))))
 
   ;; Resets statement STMT.  Returns: STMT.
@@ -535,7 +530,7 @@ int busy_notification_handler(void *ctx, int times) {
                    (else
                     (error 'bind "invalid argument type" x)))))
         (cond ((= rv status/ok) stmt)
-              (else (database-error (statement-db stmt) 'bind))))))
+              (else (database-error (statement-db stmt) rv 'bind))))))
   
   (define bind-parameter-count statement-parameter-count)
 
@@ -626,7 +621,8 @@ int busy_notification_handler(void *ctx, int times) {
               (row
                (loop (cons row L)))
               (else
-               (raise-database-error (statement-db s) 'fetch-all))))))
+               ;; Semantics are odd if exception raising is disabled.
+               (error 'fetch-all "fetch failed" s))))))
 
 ;;   (define (step-through stmt)
 ;;     (let loop ()
@@ -666,7 +662,7 @@ int busy_notification_handler(void *ctx, int times) {
                                        (lambda (sql stmt)
                                          (finalize-transient stmt))))
               (if db-ptr
-                  (database-error (make-db db-ptr filename #f #f #f)
+                  (database-error (make-db db-ptr filename #f #f #f) rv
                                   'open-database filename)
                   (error 'open-database "internal error: out of memory")))))))
 
@@ -698,20 +694,29 @@ int busy_notification_handler(void *ctx, int times) {
     (int->status (sqlite3_errcode (nonnull-db-ptr db))))
   (define (error-message db)
     (sqlite3_errmsg (nonnull-db-ptr db)))
-  (define (database-error db where . args)
+  (define (database-error db code where . args)
     (and (raise-database-errors)
-         (apply raise-database-error db where args)))
-  (define (raise-database-error db where . args)
-    (let ((db-message (error-message db)))
-      (abort
-       (make-composite-condition
-        (make-property-condition 'exn
-                                 'location where
-                                 'message db-message
-                                 'arguments args)
-        (make-property-condition 'sqlite
-                                 'status (error-code db)
-                                 'message db-message)))))
+         (apply raise-database-error db code where args)))
+  (define (raise-database-error db code where . args)
+    ;; status/misuse may not set the error code and message; signal
+    ;; a generic misuse error if we believe that has happened.
+    ;; [ref. http://www.sqlite.org/c3ref/errcode.html]
+    (if (or (not (= code status/misuse))
+            (eqv? (error-code db) 'misuse))
+        (raise-database-error/status
+         db (int->status code) where (error-message db) args)
+        (raise-database-error/status
+         db 'misuse where "misuse of interface" args)))
+  (define (raise-database-error/status db status where message args)
+    (abort
+     (make-composite-condition
+      (make-property-condition 'exn
+                               'location where
+                               'message message
+                               'arguments args)
+      (make-property-condition 'sqlite
+                               'status status
+                               'message message))))
   (define sqlite-exception? (condition-predicate 'sqlite))
   ;; note that these will return #f if you pass it a non-sqlite condition
   (define sqlite-exception-status (condition-property-accessor 'sqlite 'status))
