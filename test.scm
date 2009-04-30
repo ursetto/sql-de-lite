@@ -262,6 +262,15 @@
               (step s1)
               (error 'oops))))))
 
+(test "Reset cached statement may be pulled from cache"
+      #t   ; Cannot currently dig into statement to test it; just ensure no error
+      (call-with-database 'memory
+        (lambda (db)
+          (let* ((sql "select 1;")
+                 (s1 (prepare db sql))
+                 (s2 (prepare db sql)))
+            #t))))
+
 (test "create / insert one row via execute-sql"
       1
       (call-with-database ":memory:"

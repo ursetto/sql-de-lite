@@ -199,17 +199,17 @@ int busy_notification_handler(void *ctx, int times) {
   (define (statement-run-state s)
     (handle-run-state (statement-handle s)))
   (define (statement-reset? s)
-    (not (handle-run-state (statement-handle s))))
-  (define (statement-running? s)
     (= 0 (handle-run-state (statement-handle s))))
-  (define (statement-done? s)
+  (define (statement-running? s)
     (= 1 (handle-run-state (statement-handle s))))
+  (define (statement-done? s)
+    (= 2 (handle-run-state (statement-handle s))))
   (define (set-statement-reset! s)
-    (set-handle-run-state! (statement-handle s) #f))
-  (define (set-statement-running! s)
     (set-handle-run-state! (statement-handle s) 0))
-  (define (set-statement-done! s)
+  (define (set-statement-running! s)
     (set-handle-run-state! (statement-handle s) 1))
+  (define (set-statement-done! s)
+    (set-handle-run-state! (statement-handle s) 2))
   
   (define-inline (nonnull-statement-ptr stmt)
     ;; All references to statement ptr implicitly check for valid db.
@@ -366,7 +366,7 @@ int busy_notification_handler(void *ctx, int times) {
                             (nparam (sqlite3_bind_parameter_count stmt))
                             (names (make-vector ncol #f)))
                        (make-handle stmt ncol names nparam
-                                    #f #f)) ; cached? run-state
+                                    #f 0)) ; cached? run-state
                      #f))     ; not an error, even when raising errors
                 ((= rv status/busy)
                  (let ((bh (db-busy-handler db)))
