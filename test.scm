@@ -292,15 +292,17 @@
                 db "insert into cache values('jml', 'oak');")))
         (finalize s)
         (exec s)))))
- (test-error ;; operation on finalized statement
-  "reset after finalize fails"
+ (test
+  "reset after finalize ok"
+  #t
   (call-with-database ":memory:"
     (lambda (db)
       (exec (sql db "create table cache(k,v);"))
       (let ((s (prepare-transient
                 db "insert into cache values('jml', 'oak');")))
         (finalize s)
-        (reset s))))) 
+        (reset s)
+        #t)))) 
 
  (test-error ;;  operation on closed database
   ;; Expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
@@ -409,63 +411,60 @@
            (let ((s (prepare db1 "select * from c;"))
                  (ic (prepare db2 "insert into c(k,v) values(?,?);"))
                  (iq (prepare db2 "insert into q(k,v) values(?,?);")))
-             (test "start step in db1" '("foo" "bar") (fetch s))
-             ;; now the tests
-             (test "insert in db2 during executing read in db1 returns busy"
+             (test "select step in db1" '("foo" "bar") (fetch s))
+             (test "insert step in db2 during select in db1 returns busy"
                    'busy
                    (sqlite-exception-status
                     (handle-exceptions e e (exec iq "phlegm" "snot"))))
+
              (test "retry the busy insert, expecting busy again"
                    ;; ensure statement is reset properly; if not, we will get a bind error
+                   ;; Perform a step here to show iq is reset after BUSY in step; see next test
                    'busy
                    (sqlite-exception-status
-                    (handle-exceptions e e (exec iq "phlegm" "snot"))))
-             ;; This should -not- work -- something is wrong
-             ;; Note that if you execute ic BEFORE iq, it WILL return busy
-             ;; I cannot fathom why this happens
-             ;; Also note if you reset iq first, then ic returns BUSY
-             ;; Perhaps this is an uncaught "misuse of interface"
-             ;; It's unclear if data is actually inserted, or not
-             (test "insert in db2 during executing read in db1 returns busy"
+                    (handle-exceptions e e (step iq))))
+
+             ;; (If we don't reset iq after BUSY--currently automatically done in step--
+             ;;  then this step will mysteriously "succeed".  I suspect misuse of interface.)
+             (test "different insert in db2 also returns busy"
                    'busy
                    (sqlite-exception-status
                     (handle-exceptions e e (exec ic "hyper" "meta"))))
+             
              (test "another step in db1"
                    '("baz" "quux")
                    (fetch s))
              (test "another step in db1" '() (fetch s))
-             ;; And once s completed, we can't restart it; database is locked.
-             ;; It seems we must reset iq, even though it never wrote
-             ;; to the disk.  It must be that iq acquired a PENDING lock
-             ;; and, once the read lock is dropped, no new read locks
-             ;; may be acquired until iq is reset.  The BUSY error must
-             ;; have occurred when iq attempted to escalate to EXCLUSIVE
-             ;; during its auto-commit.  How to handle this?
-             (test "reset and restep read in db1, returns BUSY due to pending insert"
-                   'busy
-                   (sqlite-exception-status
-                    (handle-exceptions e e (reset s) (fetch s))))
 
-             (test "reset and query* fetch in s, expect BUSY, plus s should be reset by query*"
-                   'busy
-                   (begin
-                     (reset s)
-                     (sqlite-exception-status
-                      (handle-exceptions e e (query* fetch s)))))
-
-             ;; FAILS
-             (test "verify s was reset (i.e. we can re-prepare s) after the BUSY error in query*"
-                   #t   ; should verify that it's a statement and sql is the same
-                   (begin
-                          (prepare db1 "select * from c;")
-                          #t))
-             
-             (test "close open db2 write, reset and restep read in db1"
+             (test "reset and restep read in db1 ok, insert lock was reset"
                    '("foo" "bar")
-                   (begin (reset iq)
-                          (reset s)
-                          (fetch s)))
+                   (begin (reset s) (fetch s)))
 
+
+             ;; Old tests -- step formerly did not reset on statement BUSY
+;;              (test "reset and restep read in db1, returns BUSY due to pending insert"
+;;                    'busy
+;;                    (sqlite-exception-status
+;;                     (handle-exceptions e e (reset s) (fetch s))))
+
+;;              (test "reset and query* fetch in s, expect BUSY, plus s should be reset by query*"
+;;                    'busy
+;;                    (begin
+;;                      (reset s)
+;;                      (sqlite-exception-status
+;;                       (handle-exceptions e e (query* fetch s)))))
+
+;;              (test "reset open db2 write, reset and restep read in db1"
+;;                    '("foo" "bar")
+;;                    (begin (reset iq)
+;;                           (reset s)
+;;                           (fetch s)))
+
+             (test-error "prepare on executing select fails"
+                   (begin
+                     (step s)
+                     (prepare db1 "select * from c;")))
+             
            )))))
    (delete-file db-name)))
 

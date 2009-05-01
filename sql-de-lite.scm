@@ -417,12 +417,18 @@ int busy_notification_handler(void *ctx, int times) {
     (make-statement db sql (prepare-handle db sql)))
 
   ;; Returns #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE.
-  ;; On error, statement is reset.  However, statement is not
-  ;; currently reset on busy.  Oddly, one of the benefits of
+  ;; On error, statement is reset.   Oddly, one of the benefits of
   ;; resetting on error is a more descriptive error message; although
   ;; step() returns result codes directly with prepare_v2(), it still
   ;; takes a reset to convert "constraint failed" into "column key is
   ;; not unique".
+  ;; Note: we now unconditionally reset on BUSY (once, after any
+  ;; retries).  If we don't, we see weird behavior.  For example,
+  ;; first obtain a read lock with a SELECT step, then step an
+  ;; INSERT to get a BUSY; if the INSERT is not then reset, stepping
+  ;; a different INSERT may "succeed" (!), but not write
+  ;; any data.  I assume that is an undetected MISUSE condition.
+  ;; It should not be necessary to reset between calls to busy handler.
   (define (step stmt)
     (let ((db (statement-db stmt)))
       (let retry ((times 0))
@@ -436,13 +442,17 @@ int busy_notification_handler(void *ctx, int times) {
                  'done)
                 ;; sqlite3_step handles SCHEMA error itself.
                 ((= rv status/busy)
+                 ;; "SQLITE_BUSY can only occur before fetching the first row." --drh
+                 ;; Therefore, it is safe to reset on busy.
                  (set-statement-running! stmt)
                  (let ((bh (db-busy-handler db)))
                    (if (and bh
                             (retry-busy? db)
                             (bh db times))
                        (retry (+ times 1))
-                       (database-error db rv 'step stmt))))
+                       (begin
+                         (reset-unconditionally stmt)
+                         (database-error db rv 'step stmt)))))
                 (else
                  (reset-unconditionally stmt)
                  (database-error db rv 'step stmt)))))))
