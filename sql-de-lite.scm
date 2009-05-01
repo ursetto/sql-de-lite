@@ -258,7 +258,8 @@ int busy_notification_handler(void *ctx, int times) {
     (begin0
         (let ((c (current-exception-handler)))
           (with-exception-handler
-           (lambda (ex)    ; careful not to throw another exception in here
+           (lambda (ex)    ; careful not to throw another exception in here--
+                      ; handle-exceptions would be safer, but slower
              (and-let* ((statement? s)
                         (h (statement-handle s)) ; is this too paranoid?
                         (handle-ptr h))

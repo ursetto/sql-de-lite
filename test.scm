@@ -423,6 +423,9 @@
              ;; This should -not- work -- something is wrong
              ;; Note that if you execute ic BEFORE iq, it WILL return busy
              ;; I cannot fathom why this happens
+             ;; Also note if you reset iq first, then ic returns BUSY
+             ;; Perhaps this is an uncaught "misuse of interface"
+             ;; It's unclear if data is actually inserted, or not
              (test "insert in db2 during executing read in db1 returns busy"
                    'busy
                    (sqlite-exception-status
@@ -452,7 +455,7 @@
 
              ;; FAILS
              (test "verify s was reset (i.e. we can re-prepare s) after the BUSY error in query*"
-                   #t
+                   #t   ; should verify that it's a statement and sql is the same
                    (begin
                           (prepare db1 "select * from c;")
                           #t))
