@@ -199,6 +199,7 @@ int busy_notification_handler(void *ctx, int times) {
     (set-handle-cached! (statement-handle s) b))
   (define (statement-run-state s)
     (handle-run-state (statement-handle s)))
+  ;; use an int instead of symbol; this is internal, and avoids mutations
   (define (statement-reset? s)
     (= 0 (handle-run-state (statement-handle s))))
   (define (statement-running? s)
@@ -274,21 +275,15 @@ int busy_notification_handler(void *ctx, int times) {
     (and (apply bind-parameters s args)
          (exec* s)))
   ;; Executes statement s, returning the number of changes (if the
-  ;; result set has no columns as in INSERT, DELETE) or the first row (if
-  ;; column data is returned as in SELECT).  Resurrection is omitted, as it
-  ;; would wipe out any bindings.  Reset is NOT done beforehand; it is cheap,
-  ;; but the user must reset before a bind anyway.
-  ;; Reset afterward is not guaranteed; it is done only if a row
-  ;; was returned and fetch did not throw an error.  An error in step
-  ;; should not leave the statement open, but an error in retrieving column
-  ;; data will (such as a string > 16MB)--this is a flaw.
-
-  ;; FIXME: Ultimately it looks like we will need to unwind-protect
-  ;; a reset here.  If a BUSY occurs on a write, a pending lock may
-  ;; be held, stopping further reads until this is reset.  It is unknown
-  ;; if this also happens for read busies, nor if any other error may
-  ;; cause this problem.  It is unknown if we can safely just reset on
-  ;; a BUSY in step, rather than catching it here.
+  ;; result set has no columns as in INSERT, DELETE) or the first row
+  ;; (if column data is returned as in SELECT).  Resurrection is
+  ;; omitted, as it would wipe out any bindings.  Reset is NOT done
+  ;; beforehand; it is cheap, but the user must reset before a bind
+  ;; anyway.  Reset afterward is not done via unwind-protect; it will
+  ;; be done here if a row was returned, and in step() if a database
+  ;; error or busy occurs, but a Scheme error (such as retrieving
+  ;; column data > 16MB) will not cause a reset.  This is a flaw,
+  ;; but substantially faster.
   (define (exec* s)
     (and-let* ((v (fetch s)))
       (when (pair? v) (reset s))
@@ -417,18 +412,18 @@ int busy_notification_handler(void *ctx, int times) {
     (make-statement db sql (prepare-handle db sql)))
 
   ;; Returns #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE.
-  ;; On error, statement is reset.   Oddly, one of the benefits of
+  ;; On error or busy, statement is reset.   Oddly, one of the benefits of
   ;; resetting on error is a more descriptive error message; although
   ;; step() returns result codes directly with prepare_v2(), it still
   ;; takes a reset to convert "constraint failed" into "column key is
   ;; not unique".
-  ;; Note: we now unconditionally reset on BUSY (once, after any
+  ;; We do unconditionally reset on BUSY, after any
   ;; retries).  If we don't, we see weird behavior.  For example,
   ;; first obtain a read lock with a SELECT step, then step an
   ;; INSERT to get a BUSY; if the INSERT is not then reset, stepping
-  ;; a different INSERT may "succeed" (!), but not write
+  ;; a different INSERT may "succeed", but not write
   ;; any data.  I assume that is an undetected MISUSE condition.
-  ;; It should not be necessary to reset between calls to busy handler.
+  ;; NB It should not be necessary to reset between calls to busy handler.
   (define (step stmt)
     (let ((db (statement-db stmt)))
       (let retry ((times 0))
