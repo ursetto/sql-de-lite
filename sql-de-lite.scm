@@ -10,53 +10,56 @@
 int busy_notification_handler(void *ctx, int times) {
    *(C_word*)(C_data_pointer(ctx)) = C_SCHEME_TRUE;
    return 0;
-}                                                     
+}
 <#
 
 ;;; Module definition
 
 (module sql-de-lite
-  *
-;;   (
-;;      error-code error-message
-;;      open-database close-database
-;;      prepare prepare-transient
-;;      finalize resurrect
-;;      step ; step-through
-;;      fetch fetch-alist
-;;      fetch-all first-column
-;;      column-count column-name column-type column-data
-;;      column-names                         ; convenience
-;;      bind bind-parameters bind-parameter-count
-;;      library-version                      ; string, not proc
-;;      row-data row-alist
-;;      reset ;reset-unconditionally         ; core binding!
-;;      call-with-database
-;;      change-count total-change-count last-insert-rowid
-;;      with-transaction with-deferred-transaction
-;;      with-immediate-transaction with-exclusive-transaction
-;;      autocommit?
-;;      rollback commit
+    (
+     error-code error-message
+     open-database close-database
+     prepare prepare-transient
+     finalize resurrect
+     step ; step-through
+     fetch fetch-alist
+     fetch-all first-column
+     column-count column-name column-type column-data
+     column-names                         ; convenience
+     bind bind-parameters bind-parameter-count
+     library-version                      ; string, not proc
+     row-data row-alist
+     reset ;reset-unconditionally         ; core binding!
+     call-with-database
+     change-count total-change-count last-insert-rowid
+     with-transaction with-deferred-transaction
+     with-immediate-transaction with-exclusive-transaction
+     autocommit?
+     rollback commit
 
-;;      set-busy-handler! busy-timeout
+     set-busy-handler! busy-timeout
 
-;;      ;; advanced interface
-;;      query query* exec exec* sql
+     ;; advanced interface
+     query query* exec exec* sql
 
-;;      ;; parameters
-;;      raise-database-errors
-;;      prepared-cache-size
-   
-;;      ;; experimental interface
-;;      for-each-row for-each-row*
-;;      map-rows map-rows*
-;;      fold-rows fold-rows*
-;;      schema print-schema
-;;      flush-cache!
+     ;; parameters
+     raise-database-errors
+     prepared-cache-size
 
-;;      finalized?
-                
-;;      )
+     ;; experimental interface
+     for-each-row for-each-row*
+     map-rows map-rows*
+     fold-rows fold-rows*
+     schema print-schema
+     flush-cache!
+
+     ;; exceptions
+     sqlite-exception?
+     sqlite-exception-status
+     sqlite-exception-message
+
+     finalized?
+     )
 
   (import scheme
           (except chicken reset))
