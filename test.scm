@@ -383,19 +383,30 @@
 (test-group
  "large integers"
  ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
+ ;; note max int64 range on 64-bit is -2^62 ~ 2^62-1;
+ ;;     inexact will decrease range to 2^53
+ ;; note numbers egg requires exact->inexact for non-fixnum; therefore
+ ;;     injudicious application on 64-bit system reduces range to 2^53
  (call-with-database ":memory:"
    (lambda (db)
      (let ((rowid 1234567890125))
        (exec (sql db "create table cache(k,v);"))
        ;; Note the hardcoded insert to ensure the value is correct.
        (exec (sql db "insert into cache(rowid,k,v) values(1234567890125, 'jimmy', 'dunno');"))
-       (test (conc "last-insert-rowid on int64 rowid " rowid)
+       (test (conc "last-insert-rowid on int64 rowid (fails w/ numbers) " rowid)
              rowid
              (last-insert-rowid db))
-       (test (conc "retrieve row containing int64 rowid " rowid)
+       (test (conc "retrieve row containing int64 rowid (fails w/ numbers) " rowid)
              `(,rowid "jimmy" "dunno")
              (exec (sql db "select rowid, * from cache where rowid = ?;")
-                   rowid))))))
+                   rowid))
+       (test (conc "last-insert-rowid on int64 rowid (numbers ok) " rowid)
+             (exact->inexact rowid)
+             (last-insert-rowid db))
+       (test (conc "retrieve row containing int64 rowid (numbers ok) " rowid)
+             `(,(exact->inexact rowid) "jimmy" "dunno")
+             (exec (sql db "select rowid, * from cache where rowid = ?;")
+                   (exact->inexact rowid)))))))
 
 (test-group
  "multiple connections"
