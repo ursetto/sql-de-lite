@@ -1,5 +1,5 @@
 (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3)
-(compile -host -s -O2 -d0 sql-de-lite.import.scm)
+(compile -s -O2 -d0 sql-de-lite.import.scm)
 (install-extension
  'sql-de-lite 
  '("sql-de-lite.so" "sql-de-lite.import.so")
