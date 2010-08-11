@@ -157,7 +157,7 @@ int busy_notification_handler(void *ctx, int times) {
 
 (define-inline (nonnull-db-ptr db)
   (or (db-ptr db)
-      (error 'sqlite3-simple "operation on closed database")))
+      (error 'sql-de-lite "operation on closed database")))
 
 ;; Thin wrapper around sqlite-statement-handle, adding the two keys
 ;; which allows us to reconstitute a finalized statement.
@@ -221,7 +221,7 @@ int busy_notification_handler(void *ctx, int times) {
   (or (and (nonnull-db-ptr (statement-db stmt))
            (statement-handle stmt)
            (statement-ptr stmt))
-      (error 'sqlite3-simple "operation on finalized statement")))
+      (error 'sql-de-lite "operation on finalized statement")))
 
 (define (finalized? stmt)             ; inline
   (or (not (statement-handle stmt))
