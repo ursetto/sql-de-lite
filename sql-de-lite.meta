@@ -5,4 +5,5 @@
  (license "BSD")
  (doc-from-wiki)
  (needs lru-cache foreigners easyffi)
+ (test-depends test)
  (files "sql-de-lite.scm" "sql-de-lite.setup" "sql-de-lite.html" "sqlite3-api.h"))
