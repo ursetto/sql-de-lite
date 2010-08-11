@@ -1,11 +1,32 @@
 ;; -*- scheme -*-
 
+;; Optional arguments to chicken-install:
+;; -D sql-de-lite-internal-lib: Force linking with included SQLite library.
+;; -D sql-de-lite-external-lib: Force linking with system SQLite library.
+
+;; Use CSC_OPTIONS="-I<incdir> -L<libdir>" chicken-install
+;; if you want to look for an external SQLite3 library in a non-standard location.
+
+(define extension-version "0.4.0")
+
+;; Minimum SQLite version to accept when choosing whether to use external library.
+;; There's also a minimum legal version that we can even use, but we just let the
+;; linker error out if too old.
 (define +min-sqlite3-libversion+ 3007000)
+
 (define sqlite3-options
   '(-C -DSQLITE_ENABLE_FTS3
     -C -DSQLITE_ENABLE_FTS3_PARENTHESIS
 ;;  -C -DSQLITE_THREADSAFE=0                ;; probably safe
     ))
+
+(define force-internal-lib?
+  (memq 'sql-de-lite-internal-lib (extra-features)))
+(define force-external-lib?
+  (memq 'sql-de-lite-external-lib (extra-features)))
+(when (and force-internal-lib?
+           force-external-lib?)
+  (error 'sql-de-lite "cannot force both external and internal SQLite lib"))
 
 (define-syntax compile/error
   ;; Required for Chicken 4.6, which calls (reset) on (compile) error.
@@ -27,29 +48,47 @@
          (and (let ((version (with-input-from-pipe exe read))) ;; never errors
                 (and (number? version) version))))))
 
-(let ((ver (get-sqlite3-libversion)))
-  (cond ((and ver
-              (>= ver +min-sqlite3-libversion+))
-         (print "\n+++ SQLite3 version " ver " found\n")
-         (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3))
-        (else
-         (print "\n+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version\n")
-         (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite
-                  -Isqlite3 sqlite3/sqlite3.c
-                  ,@sqlite3-options)
-         ;; Using Chicken to compile the shell may link to extraneous libraries,
-         ;; but it's easier than figuring out the compilation process ourselves.
-         (compile -O2 -o chicken-sqlite3 -Isqlite3
-                  sqlite3/shell.c sqlite3/sqlite3.c
-                  ,@sqlite3-options)
-         )))
+(define (build/internal)
+  (print "\n+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version\n")
+  (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite
+           -Isqlite3 sqlite3/sqlite3.c
+           ,@sqlite3-options)
+  ;; Using Chicken to compile the shell may link to extraneous libraries,
+  ;; but it's easier than figuring out the compilation process ourselves.
+  (compile -O2 -o chicken-sqlite3 -Isqlite3
+           sqlite3/shell.c sqlite3/sqlite3.c
+           ,@sqlite3-options)
+  (install-library)
+  (install-shell))
 
-(compile -s -O2 -d0 sql-de-lite.import.scm)
-(install-extension
- 'sql-de-lite 
- '("sql-de-lite.so" "sql-de-lite.import.so")
- '((version "0.3.3")))
-(install-program
- 'sql-de-lite-shell
- '("chicken-sqlite3")
- '((version "0.3.3")))
+(define (build/external ver)
+  (when ver
+    (print "\n+++ SQLite3 version " ver " found\n"))
+  (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3)
+  (install-library))
+
+(define (install-library)
+  (compile -s -O2 -d0 sql-de-lite.import.scm)
+  (install-extension
+   'sql-de-lite 
+   `("sql-de-lite.so" "sql-de-lite.import.so")
+   `((version ,extension-version))))
+
+(define (install-shell)
+  (install-program
+   'sql-de-lite-shell
+   `("chicken-sqlite3")
+   `((version ,extension-version))))
+
+;;; Main logic
+
+(cond (force-internal-lib?
+       (build/internal))
+      (force-external-lib?
+       (build/external #f))
+      (else
+       (let ((ver (get-sqlite3-libversion)))
+         (if (and ver (>= ver +min-sqlite3-libversion+))
+             (build/external ver)
+             (build/internal)))))
+
