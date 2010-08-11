@@ -17,7 +17,7 @@
 (define sqlite3-options
   '(-C -DSQLITE_ENABLE_FTS3
     -C -DSQLITE_ENABLE_FTS3_PARENTHESIS
-;;  -C -DSQLITE_THREADSAFE=0                ;; probably safe
+    -C -DSQLITE_THREADSAFE=0                ;; otherwise, pthreads required
     ))
 
 ;; Options are pulled from (extra-features), i.e. the -D option to chicken-install.
@@ -61,7 +61,9 @@
   ;; but it's easier than figuring out the compilation process ourselves.
   (compile -O2 -o chicken-sqlite3 -Isqlite3
            sqlite3/shell.c sqlite3/sqlite3.c
-           ,@sqlite3-options)
+           ,@sqlite3-options
+           -C -DSQLITE_THREADSAFE=0      ;; Shell is single-threaded.
+           )
   (install-library)
   (install-shell))
 
