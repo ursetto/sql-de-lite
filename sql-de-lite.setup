@@ -1,6 +1,6 @@
 ;; -*- scheme -*-
 
-;; Optional arguments to chicken-install:
+;; Optional arguments to chicken-install (requires Chicken 4.5.1):
 ;; -D sql-de-lite-internal-lib: Force linking with included SQLite library.
 ;; -D sql-de-lite-external-lib: Force linking with system SQLite library.
 
@@ -20,10 +20,14 @@
 ;;  -C -DSQLITE_THREADSAFE=0                ;; probably safe
     ))
 
+;; Options are pulled from (extra-features), i.e. the -D option to chicken-install.
+;; (extra-features) requires Chicken 4.5.1; otherwise, options are set to empty.
+(define sql-de-lite-options
+  (handle-exceptions exn '() (extra-features)))
 (define force-internal-lib?
-  (memq 'sql-de-lite-internal-lib (extra-features)))
+  (memq 'sql-de-lite-internal-lib sql-de-lite-options))
 (define force-external-lib?
-  (memq 'sql-de-lite-external-lib (extra-features)))
+  (memq 'sql-de-lite-external-lib sql-de-lite-options))
 (when (and force-internal-lib?
            force-external-lib?)
   (error 'sql-de-lite "cannot force both external and internal SQLite lib"))
