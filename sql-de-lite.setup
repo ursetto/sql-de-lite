@@ -1,6 +1,55 @@
-(compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3)
+;; -*- scheme -*-
+
+(define +min-sqlite3-libversion+ 3007000)
+(define sqlite3-options
+  '(-C -DSQLITE_ENABLE_FTS3
+    -C -DSQLITE_ENABLE_FTS3_PARENTHESIS
+;;  -C -DSQLITE_THREADSAFE=0                ;; probably safe
+    ))
+
+(define-syntax compile/error
+  ;; Required for Chicken 4.6, which calls (reset) on (compile) error.
+  (syntax-rules ()
+    ((compile/error args ...)
+     (let ((old-reset (reset-handler)))
+       (parameterize ((reset-handler
+                       (lambda ()
+                         (parameterize ((reset-handler old-reset))
+                           (error 'compile "compilation error")))))
+         (compile args ...))))))
+
+;; Returns sqlite3 libversion number (e.g. 3006021) or #f if unable to obtain.
+(define (get-sqlite3-libversion)
+  (let ((exe (cond-expand (windows ".\\version-check.exe")  ;; stupid, but make-pathname can't do \ anymore
+                          (else "./version-check"))))
+    (and (handle-exceptions e #f
+           (compile/error -o ,exe version-check.scm -lsqlite3))
+         (and (let ((version (with-input-from-pipe exe read))) ;; never errors
+                (and (number? version) version))))))
+
+(let ((ver (get-sqlite3-libversion)))
+  (cond ((and ver
+              (>= ver +min-sqlite3-libversion+))
+         (print "+++ SQLite3 version " ver " found")
+         (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3))
+        (else
+         (print "+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version")
+         (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite
+                  -Isqlite3 sqlite3/sqlite3.c
+                  ,@sqlite3-options)
+         ;; Using Chicken to compile the shell may link to extraneous libraries,
+         ;; but it's easier than figuring out the compilation process ourselves.
+         (compile -O2 -o chicken-sqlite3 -Isqlite3
+                  sqlite3/shell.c sqlite3/sqlite3.c
+                  ,@sqlite3-options)
+         )))
+
 (compile -s -O2 -d0 sql-de-lite.import.scm)
 (install-extension
  'sql-de-lite 
  '("sql-de-lite.so" "sql-de-lite.import.so")
+ '((version "0.3.3")))
+(install-program
+ 'sql-de-lite-shell
+ '("chicken-sqlite3")
  '((version "0.3.3")))
