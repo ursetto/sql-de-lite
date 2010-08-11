@@ -148,8 +148,11 @@
            (let ((s (sql db "select 1 union select 2;")))
              (list (exec s)
                    (fetch s))))))
- (test-error "exec does NOT reset when column count = 0"
-             ;; Fails with status/misuse.
+ (test "exec resets even when column count = 0 (requires >= 3.7.0)"
+             ;; Fails with status/misuse in < 3.7.0.  In >= 3.7.0,
+             ;; statements are automatically reset by the library,
+             ;; even though we do not reset it.
+       '(1 ())
              (call-with-database ":memory:"
                (lambda (db)
                  (exec (sql db "create table a(k,v);"))
@@ -158,6 +161,8 @@
                          (fetch s))))))
  )
 
+(test-group
+ "fetch"
 
 (test "fetch first row via fetch"
       '(1 2)
@@ -191,6 +196,17 @@
                   (begin (reset s) 'reset)
                   (fetch-all s))))))
 
+(test "fetch all rows twice via fetch-all + fetch-all (requires >= 3.7.0)"
+      '(((1 2) (3 4) (5 6)) library-reset ((1 2) (3 4) (5 6)))
+      (call-with-database ":memory:"
+        (lambda (db)
+          (let ((s (prepare db (string-literal "select 1, 2 union "
+                                               "select 3, 4 union "
+                                               "select 5, 6;"))))
+            (list (fetch-all s)
+                  'library-reset
+                  (fetch-all s))))))
+
 (test "fetch all rows twice via (query fetch-all ...) x 2"
       '(((1 2) (3 4) (5 6)) ((1 2) (3 4) (5 6)))
       (call-with-database ":memory:"
@@ -212,6 +228,7 @@
             (list (fetch s)
                   'fetch
                   (fetch-all s))))))
+)
 
 ;; No way to really test this other than inspecting warnings
 ;; (test "Pending cached queries are finalized when DB is closed"
