@@ -30,10 +30,10 @@
 (let ((ver (get-sqlite3-libversion)))
   (cond ((and ver
               (>= ver +min-sqlite3-libversion+))
-         (print "+++ SQLite3 version " ver " found")
+         (print "\n+++ SQLite3 version " ver " found\n")
          (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3))
         (else
-         (print "+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version")
+         (print "\n+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version\n")
          (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite
                   -Isqlite3 sqlite3/sqlite3.c
                   ,@sqlite3-options)
