@@ -69,12 +69,12 @@ int busy_notification_handler(void *ctx, int times) {
               object->pointer object-release object-evict pointer=?))
 (import (only data-structures alist-ref))
 (import (only srfi-18 thread-sleep! milliseconds->time))
-(import foreign foreigners easyffi)
+(import foreign foreigners)
 (require-extension lru-cache)
 
 ;;; Foreign interface
 
-#>? #include "sqlite3-api.h" <#
+(include "sqlite3-api.scm")
 
 (define-foreign-enum-type (sqlite3:type int)
   (type->int int->type)

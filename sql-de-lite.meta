@@ -4,6 +4,7 @@
  (category db)
  (license "BSD")
  (doc-from-wiki)
- (needs (lru-cache 0.5.3) foreigners easyffi)
+ (needs (lru-cache 0.5.3) foreigners)
  (test-depends test)
- (files "sql-de-lite.scm" "sql-de-lite.setup" "sql-de-lite.html" "sqlite3-api.h"))
+ (files "sql-de-lite.scm" "sql-de-lite.setup" "sqlite3-api.h"
+        "sqlite3/shell.c" "sqlite3/sqlite3.c" "sqlite3/sqlite3.h"))

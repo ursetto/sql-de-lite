@@ -7,7 +7,7 @@
 ;; Use CSC_OPTIONS="-I<incdir> -L<libdir>" chicken-install
 ;; if you want to look for an external SQLite3 library in a non-standard location.
 
-(define extension-version "0.4.0")
+(define extension-version "0.4.1")
 
 ;; Minimum SQLite version to accept when choosing whether to use external library.
 ;; There's also a minimum legal version that we can even use, but we just let the
@@ -33,7 +33,7 @@
   (error 'sql-de-lite "cannot force both external and internal SQLite lib"))
 
 (define-syntax compile/error
-  ;; Required for Chicken 4.6, which calls (reset) on (compile) error.
+  ;; Required for Chicken < 4.6, which calls (reset) on (compile) error.
   (syntax-rules ()
     ((compile/error args ...)
      (let ((old-reset (reset-handler)))
@@ -54,7 +54,7 @@
 
 (define (build/internal)
   (print "\n+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version\n")
-  (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite
+  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite
            -Isqlite3 sqlite3/sqlite3.c
            ,@sqlite3-options)
   ;; Using Chicken to compile the shell may link to extraneous libraries,
@@ -70,7 +70,7 @@
 (define (build/external ver)
   (when ver
     (print "\n+++ SQLite3 version " ver " found\n"))
-  (compile -s -O2 -d2 -inline -local -X easyffi sql-de-lite.scm -j sql-de-lite -lsqlite3)
+  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite -lsqlite3)
   (install-library))
 
 (define (install-library)
