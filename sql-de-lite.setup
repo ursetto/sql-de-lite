@@ -12,7 +12,7 @@
 ;; Minimum SQLite version to accept when choosing whether to use external library.
 ;; There's also a minimum legal version that we can even use, but we just let the
 ;; linker error out if too old.
-(define +min-sqlite3-libversion+ 3007000)
+(define +min-sqlite3-libversion+ 3007000)   ;; 3007003 is included with egg
 
 (define sqlite3-options
   '(-C -DSQLITE_ENABLE_FTS3
