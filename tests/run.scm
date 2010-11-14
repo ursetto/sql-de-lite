@@ -398,6 +398,50 @@
  )
 
 (test-group
+ "statement traversal"
+ (call-with-database
+  ":memory:"
+  (lambda (db)
+    (let ((s (sql db (string-literal "select 1, 2 union "
+                                     "select 3, 4 union "
+                                     "select 5, 6;"))))
+      (test "map-rows"
+            '(3 7 11)
+            (query (map-rows (lambda (r) (apply + r))) s))
+      (test "map-rows*"
+            '(3 7 11)
+            (query (map-rows* +) s))
+      (test "for-each-row"
+            21
+            (let ((sum 0))
+              (query (for-each-row (lambda (r)
+                                     (set! sum (+ sum (apply + r)))))
+                     s)
+              sum))
+      (test "for-each-row*"
+            21
+            (let ((sum 0))
+              (query (for-each-row* (lambda (x y)
+                                     (set! sum (+ sum (+ x y)))))
+                     s)
+              sum))
+      (test "fold-rows"
+            44
+            (query (fold-rows (lambda (r seed)
+                                (+ (apply * r)
+                                   seed))
+                              0)
+                   s))
+      (test "fold-rows*"
+            44
+            (query (fold-rows* (lambda (x y seed)
+                                 (+ (* x y)
+                                    seed))
+                               0)
+                   s))
+      ))))
+
+(test-group
  "large integers"
  ;; note int64 range on 32-bit is -2^53 ~ 2^53-1 where 2^53=9007199254740992
  ;; note max int64 range on 64-bit is -2^62 ~ 2^62-1;

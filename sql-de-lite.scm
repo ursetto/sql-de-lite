@@ -49,7 +49,8 @@ int busy_notification_handler(void *ctx, int times) {
   ;; experimental interface
   for-each-row for-each-row*
   map-rows map-rows*
-  fold-rows fold-rows*
+  fold-rows
+  fold-rows*   ;; deprecated
   schema print-schema
   flush-cache!
 
@@ -325,8 +326,9 @@ int busy_notification_handler(void *ctx, int times) {
   (for-each-row (lambda (r) (apply proc r))))
 (define (map-rows* proc)
   (map-rows (lambda (r) (apply proc r))))
-(define (fold-rows* proc)
-  (fold-rows (lambda (r) (apply proc r))))
+(define (fold-rows* kons knil)   ;; Deprecated -- inefficient.
+  (fold-rows (lambda (r seed) (apply kons (append r (list seed))))
+             knil))
 
 ;; These produce equivalent results:  
 ;; (query (map-rows car) (sql db "select name, sql from sqlite_master;"))
