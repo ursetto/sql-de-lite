@@ -37,7 +37,7 @@ bool sqlite3_get_autocommit(sqlite3*);
 int sqlite3_bind_parameter_count(sqlite3_stmt*);
 int sqlite3_bind_parameter_index(sqlite3_stmt*, const char *zName);
 const char *sqlite3_bind_parameter_name(sqlite3_stmt*, int);
-int sqlite3_bind_blob(sqlite3_stmt*, int, ___byte_vector b,
+int sqlite3_bind_blob(sqlite3_stmt*, int, ___blob b,
                       int n, void(*)(void*));
 int sqlite3_bind_double(sqlite3_stmt*, int, double);
 int sqlite3_bind_int(sqlite3_stmt*, int, int);
