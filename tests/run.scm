@@ -373,13 +373,6 @@
             (exec (sql db "insert or ignore into a values(?,?)")
                   "foo" "bar"))))
 
-(test-error "invalid bound parameter type (procedure) throws error"
-            (call-with-database 'memory
-              (lambda (db)
-                (exec (sql db "create table a(k,v);"))
-                (exec (sql db "select * from a where k = ?;")
-                      identity))))
-
 (test-group
  "open-database"
  (test "open in-memory database using 'memory"
@@ -479,10 +472,12 @@
            (sget (sql db "select v from a where k=?;"))
            (set (lambda (k v) (exec sset k v)))
            (get (lambda (k) (first-column (exec sget k)))))
-      (test "insert short blob" 1            
+      (test "insert short blob value" 1            
             (set "foo" (string->blob "barbaz")))
-      (test "select short blob" "barbaz"
+      (test "select short blob value" "barbaz"
             (blob->string (get "foo")))
+      (test-error "invalid bound parameter type (procedure) throws error"
+                  (get identity))
       ))))
 
 (test-group
