@@ -470,6 +470,22 @@
                    (exact->inexact rowid)))))))
 
 (test-group
+ "binding types"     ;; Perhaps "large integers" test could be folded in here.
+ (call-with-database
+  'memory
+  (lambda (db)
+    (exec (sql db "create table a(k,v);"))
+    (let* ((sset (sql db "insert into a(k,v) values(?,?);"))
+           (sget (sql db "select v from a where k=?;"))
+           (set (lambda (k v) (exec sset k v)))
+           (get (lambda (k) (first-column (exec sget k)))))
+      (test "insert short blob" 1            
+            (set "foo" (string->blob "barbaz")))
+      (test "select short blob" "barbaz"
+            (blob->string (get "foo")))
+      ))))
+
+(test-group
  "multiple connections"
  (let ((db-name (create-temporary-file "db")))
    (call-with-database db-name
