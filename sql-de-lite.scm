@@ -847,12 +847,13 @@ int busy_notification_handler(void *ctx, int times) {
       (sqlite3_busy_handler (nonnull-db-ptr db) #f #f))
   (void))
 (define (thread-sleep!/ms ms)
-  (thread-sleep!
-   (milliseconds->time (+ ms (current-milliseconds)))))
+  (thread-sleep! (/ ms 1000)))
 ;; (busy-timeout ms) returns a procedure suitable for use in
 ;; set-busy-handler!, implementing a spinning busy timeout using the
 ;; SQLite3 busy algorithm.  Other threads may be scheduled while
 ;; this one is busy-waiting.
+;;   FIXME: socket egg has updated algorithm which respects actual
+;;          elapsed time, not estimated time
 (define busy-timeout
   (let* ((delays '#(1 2 5 10 15 20 25 25  25  50  50 100))
          (totals '#(0 1 3  8 18 33 53 78 103 128 178 228))
