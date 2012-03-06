@@ -24,6 +24,7 @@ int busy_notification_handler(void *ctx, int times) {
   step ; step-through
   fetch fetch-alist
   fetch-all first-column
+  fetch-value
   column-count column-name column-type column-data
   column-names                         ; convenience
   bind bind-parameters bind-parameter-count
@@ -630,6 +631,19 @@ int busy_notification_handler(void *ctx, int times) {
       ((row) (row-alist s))
       (else
        (error 'fetch-alist "internal error: step result invalid" rv)))))
+
+;; Fetch first column of first row, or #f if no data.
+(define (fetch-value s)
+  (and-let* ((rv (step s)))
+    (case rv
+      ((done) #f)
+      ((row)
+       (column-data s 0)
+       ;; I believe a row with no columns can never be returned; the
+       ;; above will throw an error if so.  Or we could handle it gracefully:
+       ;; (and (> 0 (column-count s)) (column-data s 0))
+      (else
+       (error 'fetch-value "internal error: step result invalid" rv)))))
 
 ;; Fetch remaining rows into a list.
 (define (fetch-all s)
