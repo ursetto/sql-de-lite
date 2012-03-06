@@ -621,6 +621,7 @@ int busy_notification_handler(void *ctx, int times) {
       ((row) (row-data s))
       (else
        (error 'fetch "internal error: step result invalid" rv)))))
+
 ;; Same as fetch, but returns an alist: '((name1 . col1) ...)
 (define (fetch-alist s)               ; nearly identical to (fetch)
   (and-let* ((rv (step s)))
@@ -628,7 +629,7 @@ int busy_notification_handler(void *ctx, int times) {
       ((done) '())
       ((row) (row-alist s))
       (else
-       (error 'fetch "internal error: step result invalid" rv)))))
+       (error 'fetch-alist "internal error: step result invalid" rv)))))
 
 ;; Fetch remaining rows into a list.
 (define (fetch-all s)
