@@ -25,6 +25,7 @@ int busy_notification_handler(void *ctx, int times) {
   fetch fetch-alist
   fetch-all first-column
   fetch-value
+  fetch-column fetch-row fetch-rows fetch-alists
   column-count column-name column-type column-data
   column-names                         ; convenience
   bind bind-parameters bind-parameter-count
@@ -613,6 +614,8 @@ int busy_notification_handler(void *ctx, int times) {
                       (column-data stmt i))
                 (loop (fx+ i 1)))))))
 
+;; Add? row-vector
+
 ;; Step statement and return row data. Returns #f (or error) on failure,
 ;; '() on done, '(col1 col2 ...) on success.
 (define (fetch s)
@@ -622,6 +625,7 @@ int busy_notification_handler(void *ctx, int times) {
       ((row) (row-data s))
       (else
        (error 'fetch "internal error: step result invalid" rv)))))
+(define fetch-row fetch)
 
 ;; Same as fetch, but returns an alist: '((name1 . col1) ...)
 (define (fetch-alist s)               ; nearly identical to (fetch)
@@ -642,6 +646,7 @@ int busy_notification_handler(void *ctx, int times) {
        ;; I believe a row with no columns can never be returned; the
        ;; above will throw an error if so.  Or we could handle it gracefully:
        ;; (and (> 0 (column-count s)) (column-data s 0))
+       )
       (else
        (error 'fetch-value "internal error: step result invalid" rv)))))
 
@@ -656,6 +661,24 @@ int busy_notification_handler(void *ctx, int times) {
             (else
              ;; Semantics are odd if exception raising is disabled.
              (error 'fetch-all "fetch failed" s))))))
+(define fetch-rows fetch-all)
+
+;; Lots of duplicated code here.
+(define (fetch-column s)           ;; Should this be called fetch-values?  "values" may imply MV, but is more consistent.
+  (let loop ((L '()))
+    (let ((val (fetch-value s)))
+      (cond (val
+             (loop (cons val L)))
+            (else (reverse L))))))
+(define (fetch-alists s)
+  (let loop ((L '()))
+    (let ((row (fetch-alist s)))
+      (cond ((null? row)
+             (reverse L))
+            (else
+             (loop (cons row L)))))))
+
+;; Add? vector retrieval via row-vector.
 
 ;;   (define (step-through stmt)
 ;;     (let loop ()
