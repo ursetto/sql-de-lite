@@ -290,7 +290,7 @@ int busy_notification_handler(void *ctx, int times) {
 ;; but substantially faster.
 (define (exec* s)
   (and-let* ((v (fetch s)))
-    (when (pair? v) (reset s))
+    (reset s)
     (if (> (column-count s) 0)
         v
         (change-count (statement-db s)))))

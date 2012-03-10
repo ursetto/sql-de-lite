@@ -148,10 +148,9 @@
            (let ((s (sql db "select 1 union select 2;")))
              (list (exec s)
                    (fetch s))))))
- (test "exec resets even when column count = 0 (requires >= 3.7.0)"
-             ;; Fails with status/misuse in < 3.7.0.  In >= 3.7.0,
-             ;; statements are automatically reset by the library,
-             ;; even though we do not reset it.
+ (test "exec resets even when column count = 0"
+       ;; We now unconditionally reset after any exec, even if it returns
+       ;; no rows, because ROLLBACK does not behave properly if not reset.
        '(1 ())
              (call-with-database ":memory:"
                (lambda (db)
@@ -196,7 +195,14 @@
                   (begin (reset s) 'reset)
                   (fetch-all s))))))
 
-(test "fetch all rows twice via fetch-all + fetch-all (requires >= 3.7.0)"
+;; Test disabled because it amounts to misuse of interface.  Although
+;; autoreset was added in 3.6.23.2 (and made configurable in 3.7.5
+;; via SQLITE_OMIT_AUTORESET) it was only intended to fix broken applications.
+;; And it seems the version of sqlite included with OS X Lion (3.7.5) is
+;; built with autoreset omitted, so we can't rely on consistent behavior
+;; based on version.  Therefore, we declare this behavior undefined.
+#;
+(test "fetch all rows twice via fetch-all + fetch-all (requires >= 3.6.23.2)"
       '(((1 2) (3 4) (5 6)) library-reset ((1 2) (3 4) (5 6)))
       (call-with-database ":memory:"
         (lambda (db)
@@ -523,7 +529,6 @@
                    '("foo" "bar")
                    (begin (reset s) (fetch s)))
 
-
              ;; Old tests -- step formerly did not reset on statement BUSY
 ;;              (test "reset and restep read in db1, returns BUSY due to pending insert"
 ;;                    'busy
@@ -547,7 +552,26 @@
                    (begin
                      (step s)
                      (prepare db1 "select * from c;")))
-             
+
+             ;; Reset all statements now.  If we don't, ROLLBACK fails with
+             ;; "cannot rollback transaction - SQL statements in progress".
+             ;; This is worrisome and should be investigated further.
+             (reset s) (reset ic) (reset iq)
+
+             ;; May be wise to pull out into separate database connections to avoid
+             ;; disrupting this test.
+             (test "rollback of immediate trans. releases write lock" #t
+                   ;; If we do not reset the ROLLBACK statement after stepping it,
+                   ;; *then* execute a read, the lock is apparently re-escalated into
+                   ;; RESERVED, and not released until the ROLLBACK is reset.
+                   (begin
+                     (exec (sql db1 "begin immediate;"))
+                     (exec (sql db1 "rollback;"))
+                     (query fetch (sql db1 "select * from c;")) ;; <-- read step is required
+                     (exec (sql db2 "begin exclusive;"))        ;; <-- error occurs here
+                     (exec (sql db2 "rollback;"))
+                     #t))
+
            )))))
    (delete-file db-name)))
 
