@@ -7,7 +7,7 @@
 ;; Use CSC_OPTIONS="-I<incdir> -L<libdir>" chicken-install
 ;; if you want to look for an external SQLite3 library in a non-standard location.
 
-(define extension-version "0.4.4")
+(define extension-version "0.4.5")
 
 ;; Minimum SQLite version to accept when choosing whether to use external library.
 ;; There's also a minimum legal version that we can even use, but we just let the
