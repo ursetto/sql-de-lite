@@ -130,6 +130,14 @@
         integer
         integer)))
   (begin
+    (define sqlite3_bind_int64
+      (foreign-lambda
+        integer
+        "sqlite3_bind_int64"
+        (c-pointer "sqlite3_stmt")
+        integer
+        integer64)))
+  (begin
     (define sqlite3_bind_null
       (foreign-lambda
         integer

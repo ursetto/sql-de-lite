@@ -540,7 +540,7 @@ int busy_notification_handler(void *ctx, int times) {
                                      destructor-type/transient))
                  ((number? x)
                   (if (exact? x)
-                      (sqlite3_bind_int ptr i x)
+                      (sqlite3_bind_int64 ptr i x)    ;; Required for 64-bit.  Only int needed on 32 bit.
                       (sqlite3_bind_double ptr i x)))
                  ((blob? x)
                   (sqlite3_bind_blob ptr i x (blob-size x)
