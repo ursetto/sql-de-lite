@@ -275,6 +275,25 @@
               (set! s2 (prepare-transient db "select 3 union select 4"))
               (step s1)
               (error 'oops))))))
+(test "Prepared statements are not FINALIZED? after bind error when cache disabled"
+      ;; They are finalized (you may receive a warning), but don't show
+      ;; up as FINALIZED?.  Currently, we do not confirm finalization
+      ;; other than through manually inspecting the warning.
+      #f
+      (let ((s1 #f))
+        (handle-exceptions ex
+            ;; FIXME! NB We need to check if the database was actually closed here,
+            ;; but have no official API to do that except by running a command
+            ;; against it and testing for error.
+            (finalized? s1)
+          (parameterize ((prepared-cache-size 0))
+            (call-with-database
+             ":memory:"
+             (lambda (db)
+               ;; Generate a bind error (symbol is invalid argument type)
+               (set! s1 (sql db "select * from sqlite_master where sql=?"))
+               (query fetch s1 'foo)
+               #t))))))
 (test "Cached statements are finalized on error in call-with-database"
       #t
       (let ((s1 #f) (s2 #f))
