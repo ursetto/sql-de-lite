@@ -261,46 +261,49 @@
             (finalize s2)
             rv))))
 
-(test "Transient statements are finalized but not FINALIZED? in call/db"
+;; This is not "good" behavior, but expected.
+(test "Open transient statements leave database open after call/db"
       ;; They are finalized (you may receive a warning), but don't show
       ;; up as FINALIZED?.  Currently, we do not confirm finalization
       ;; other than through manually inspecting the warning.
-      #f
-      (let ((s1 #f) (s2 #f))
+      #t
+      (let ((s1 #f) (s2 #f) (db0 #f))
         (handle-exceptions ex
-            (and (finalized? s1) (finalized? s2))
+            (and (not (finalized? s1)) (not (finalized? s2))
+                 (not (database-closed? db0)))
           (call-with-database ":memory:"
             (lambda (db)
+              (set! db0 db)
               (set! s1 (prepare-transient db "select 1 union select 2"))
               (set! s2 (prepare-transient db "select 3 union select 4"))
               (step s1)
               (error 'oops))))))
-(test "Prepared statements are not FINALIZED? after bind error when cache disabled"
+(test "Prepared statements are FINALIZED? after QUERY bind error (cache disabled)"
       ;; They are finalized (you may receive a warning), but don't show
       ;; up as FINALIZED?.  Currently, we do not confirm finalization
       ;; other than through manually inspecting the warning.
-      #f
-      (let ((s1 #f))
+      ;; FIXME: We test QUERY here but not EXEC.
+      #t
+      (let ((s1 #f) (db0 #f))
         (handle-exceptions ex
-            ;; FIXME! NB We need to check if the database was actually closed here,
-            ;; but have no official API to do that except by running a command
-            ;; against it and testing for error.
-            (finalized? s1)
+            (and (finalized? s1) (database-closed? db0))
           (parameterize ((prepared-cache-size 0))
             (call-with-database
              ":memory:"
              (lambda (db)
+               (set! db0 db)
                ;; Generate a bind error (symbol is invalid argument type)
                (set! s1 (sql db "select * from sqlite_master where sql=?"))
                (query fetch s1 'foo)
                #t))))))
 (test "Cached statements are finalized on error in call-with-database"
       #t
-      (let ((s1 #f) (s2 #f))
+      (let ((s1 #f) (s2 #f) (db0 #f))
         (handle-exceptions ex
-            (and (finalized? s1) (finalized? s2))
+            (and (finalized? s1) (finalized? s2) (database-closed? db0))
           (call-with-database ":memory:"
             (lambda (db)
+              (set! db0 db)
               (set! s1 (prepare db "select 1 union select 2"))
               (set! s2 (prepare db "select 3 union select 4"))
               (step s1)
@@ -347,22 +350,44 @@
         #t)))) 
 
  (test-error ;;  operation on closed database
-  ;; Expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
-  "Operating on statement fails after database close (cache enabled)"
-  (let ((s (call-with-database ":memory:"
-             (lambda (db)
-               (exec (sql db "create table cache(k,v);"))
-               (prepare db "insert into cache values('jml', 'oak');")))))
+  "Exec prepared statement fails after database close (cache enabled)"
+  (let ((s (call-with-database
+            ":memory:"
+            (lambda (db)
+              (exec (sql db "create table cache(k,v);"))
+              (prepare db "insert into cache values('jml', 'oak');")))))
     (exec s)))
- (test-error ;;  operation on closed database
-  ;; Expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
-  "Operating on statement fails after database close (cache disabled)"
-  (let ((s (call-with-database ":memory:"
+;; Not good behavior, but expected.
+ (test       ;;  operation on closed database
+  ;; Expected: Leaked database handle warning.
+  "Exec prepared statement succeeds due to failed database close"
+  #t
+  (parameterize ((prepared-cache-size 0))
+    (let* ((db0 #f)
+           (s (call-with-database
+               ":memory:"
+               (lambda (db)
+                 (set! db0 db)
+                 (exec (sql db "create table cache(k,v);"))
+                 (prepare db "insert into cache values('jml', 'oak');")))))
+      (and (not (database-closed? db0))
+           (= 1 (exec s))))))
+ ;; Not good behavior, but expected.
+ (test       ;;  Should be operation on closed database, but database is still open.
+  ;; No longer expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
+  ;; Expected: Leaked database handle warning.
+  "Operating on transient statement succeeds due to failed database close"
+  #t
+  (let* ((db0 #f)
+         (s (call-with-database
+             ":memory:"
              (lambda (db)
+               (set! db0 db)
                (exec (sql db "create table cache(k,v);"))
                (prepare-transient
                 db "insert into cache values('jml', 'oak');")))))
-    (exec s))))
+    (and (not (database-closed? db0))
+         (= 1 (exec s))))))
 
 (test "Successful rollback outside transaction"
       #t

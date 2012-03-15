@@ -62,6 +62,7 @@ int busy_notification_handler(void *ctx, int times) {
   sqlite-exception-message
 
   finalized?
+  database-closed?
   )
 
 (import scheme
@@ -245,13 +246,25 @@ int busy_notification_handler(void *ctx, int times) {
         (else
          (reset s))))
 
-;; Resurrects s, binds args to s and performs a query*.  This is the
+;; Resurrects s, binds args to s and performs a query*.  If the statement
+;; was not cached, also finalizes the statement.  This is the
 ;; usual way to perform a query unless you need to bind arguments
 ;; manually or need other manual control.
 (define (query proc s . args)
   (resurrect s)
-  (and (apply bind-parameters s args)
-       (query* proc s)))
+  (if (statement-cached? s)
+      ;; It's a no-op to call (finalize s) on a cached statement, but
+      ;; entirely unnecessary.
+      (and (apply bind-parameters s args)
+           (query* proc s))
+      (handle-exceptions e
+          (begin
+            (finalize-transient s)
+            (signal e))
+        (and (apply bind-parameters s args)
+             (begin0
+                 (query* proc s)
+               (finalize-transient s))))))
 ;; Calls (proc s) and resets the statement immediately afterward, to
 ;; avoid locking the database.  If an exception occurs during proc,
 ;; the statement will still be reset.  Statement is NOT reset before
@@ -725,6 +738,10 @@ int busy_notification_handler(void *ctx, int times) {
 (define (close-database db)
   (let ((db-ptr (nonnull-db-ptr db)))
     (lru-cache-flush! (db-statement-cache db))
+    ;; It's not safe to finalize all open statements, because SQLite itself
+    ;; may prepare statements under the hood (e.g. with FTS) and a double
+    ;; finalize is fatal.  Therefore we have removed this protective measure.
+    #;
     (do ((stmt (sqlite3_next_stmt db-ptr #f) ; finalize pending statements
                (sqlite3_next_stmt db-ptr stmt)))
         ((not stmt))
@@ -737,14 +754,23 @@ int busy_notification_handler(void *ctx, int times) {
            #t)
           (else #f))))
 
+(define (database-closed? db)
+  (not (db-ptr db)))
+
 (define (call-with-database filename proc)
   (let ((db (open-database filename)))
     (let ((c (current-exception-handler)))
       (begin0
           (with-exception-handler
-           (lambda (ex) (close-database db) (c ex))
+           (lambda (ex)
+             ;; Failing to close the db will leak resources, but it's not clear
+             ;; what we can do other than warn and throw original exception.
+             (or (close-database db)
+                 (warning "leaked open database handle" db))
+             (c ex))
            (lambda () (proc db)))
-        (close-database db)))))
+        (or (close-database db)
+            (warning "leaked open database handle" db))))))
 
 (define (error-code db)
   (int->status (sqlite3_errcode (nonnull-db-ptr db))))
