@@ -280,7 +280,6 @@
               (error 'oops))))))
 (test "Prepared statements are FINALIZED? after QUERY bind error (cache disabled)"
       ;; Ensure QUERY finalizes uncached statements in case of bind error.
-      ;; FIXME: We test QUERY here but not EXEC.
       #t
       (let ((s1 #f) (db0 #f))
         (handle-exceptions ex
@@ -290,9 +289,25 @@
              ":memory:"
              (lambda (db)
                (set! db0 db)
-               ;; Generate a bind error (symbol is invalid argument type)
                (set! s1 (sql db "select * from sqlite_master where sql=?"))
-               (query fetch s1 'foo)
+               ;; Generate a bind error (#f is invalid argument type)
+               (query fetch s1 #f)
+               #t))))))
+(test "Prepared statements are FINALIZED? after EXEC bind error (cache disabled)"
+      ;; Ensure EXEC finalizes uncached statements in case of bind error.
+      ;; Copy and paste from QUERY version.
+      #t
+      (let ((s1 #f) (db0 #f))
+        (handle-exceptions ex
+            (and (finalized? s1) (database-closed? db0))
+          (parameterize ((prepared-cache-size 0))
+            (call-with-database
+             ":memory:"
+             (lambda (db)
+               (set! db0 db)
+               (set! s1 (sql db "select * from sqlite_master where sql=?"))
+               ;; Generate a bind error (#f is invalid argument type)
+               (exec s1 #f)
                #t))))))
 #;
 (test "Prepared statements are FINALIZED? after QUERY bind error (expired)"
