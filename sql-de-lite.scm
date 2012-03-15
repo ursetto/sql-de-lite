@@ -297,8 +297,14 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Resurrects s, binds args to s and performs an exec*.
 (define (exec s . args)
   (resurrect s)
-  (and (apply bind-parameters s args)
-       (exec* s)))
+  (if (statement-cached? s)
+      (and (apply bind-parameters s args)
+           (exec* s))
+      (fast-unwind-protect*
+       (and (apply bind-parameters s args)
+            (exec* s))
+       (finalize-transient s))))
+
 ;; Executes statement s, returning the number of changes (if the
 ;; result set has no columns as in INSERT, DELETE) or the first row
 ;; (if column data is returned as in SELECT).  Resurrection is

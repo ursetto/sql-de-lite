@@ -278,7 +278,7 @@
               (set! s2 (prepare-transient db "select 3 union select 4"))
               (step s1)
               (error 'oops))))))
-(test "Prepared statements are FINALIZED? after QUERY bind error (cache disabled)"
+(test "Prepared stmts FINALIZED? after QUERY bind error (cache disabled)"
       ;; Ensure QUERY finalizes uncached statements in case of bind error.
       #t
       (let ((s1 #f) (db0 #f))
@@ -293,7 +293,7 @@
                ;; Generate a bind error (#f is invalid argument type)
                (query fetch s1 #f)
                #t))))))
-(test "Prepared statements are FINALIZED? after EXEC bind error (cache disabled)"
+(test "Prepared stmts FINALIZED? after EXEC bind error (cache disabled)"
       ;; Ensure EXEC finalizes uncached statements in case of bind error.
       ;; Copy and paste from QUERY version.
       #t
