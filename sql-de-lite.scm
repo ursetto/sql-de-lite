@@ -290,8 +290,8 @@ int busy_notification_handler(void *ctx, int times) {
   ;;   (error 'query* "not a statement" s))
   (fast-unwind-protect*
    (proc s)
-   (reset s)
-   (unless (and (statement? s) (finalized? s))
+   (reset s)  ;; May be ok to check finalized? here to avoid error if user finalized in PROC.
+   (when (and (statement? s) (not (finalized? s)))
      (reset-unconditionally s))))
 
 ;; Resurrects s, binds args to s and performs an exec*.

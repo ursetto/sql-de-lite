@@ -351,6 +351,11 @@
               (step s1)
               (error 'oops))))))
 
+(test-error "query* on non-statement does not enter infinite loop"
+            ;; Check that we don't raise exception in fast-unwind-protect*.
+            ;; This test can never fail! ;)
+            (call-with-database ":memory:" (lambda (db) (query* #f #f))))
+
 (test "Reset cached statement may be pulled from cache"
       #t   ; Cannot currently dig into statement to test it; just ensure no error
       (call-with-database 'memory
