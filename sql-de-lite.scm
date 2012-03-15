@@ -246,6 +246,22 @@ int busy_notification_handler(void *ctx, int times) {
         (else
          (reset s))))
 
+;; fast version of unwind-protect*; does not use handle-exceptions
+;; so it is unsafe to throw an error inside the exception handler (program will lock up).
+(define-syntax fast-unwind-protect*
+  (syntax-rules ()
+    ((_ protected cleanup)
+     (fast-unwind-protect* protected cleanup cleanup))
+    ((_ protected normal abnormal)
+     (begin0
+         (let ((c (current-exception-handler)))
+           (with-exception-handler
+            (lambda (ex)
+              abnormal
+              (c ex))
+            (lambda () protected)))
+       normal))))
+
 ;; Resurrects s, binds args to s and performs a query*.  If the statement
 ;; was not cached, also finalizes the statement.  This is the
 ;; usual way to perform a query unless you need to bind arguments
@@ -257,14 +273,10 @@ int busy_notification_handler(void *ctx, int times) {
       ;; entirely unnecessary.
       (and (apply bind-parameters s args)
            (query* proc s))
-      (handle-exceptions e
-          (begin
-            (finalize-transient s)
-            (signal e))
-        (and (apply bind-parameters s args)
-             (begin0
-                 (query* proc s)
-               (finalize-transient s))))))
+      (fast-unwind-protect*
+       (and (apply bind-parameters s args)
+            (query* proc s))
+       (finalize-transient s))))
 ;; Calls (proc s) and resets the statement immediately afterward, to
 ;; avoid locking the database.  If an exception occurs during proc,
 ;; the statement will still be reset.  Statement is NOT reset before
@@ -272,21 +284,15 @@ int busy_notification_handler(void *ctx, int times) {
 ;; pending statements, you can dispense with the unwind-protect as long
 ;; as you don't attempt to continue.
 (define (query* proc s)
-  ;; (when (or (not (statement? s)) ; Optional check before entering
-  ;;           (finalized? s))      ; exception handler.
-  ;;   (error 'query* "operation on finalized statement"))
-  (begin0
-      (let ((c (current-exception-handler)))
-        (with-exception-handler
-         (lambda (ex)    ; careful not to throw another exception in here--
-                                        ; handle-exceptions would be safer, but slower
-           (and-let* ((statement? s)
-                      (h (statement-handle s)) ; is this too paranoid?
-                      (handle-ptr h))
-             (reset-unconditionally s))
-           (c ex))
-         (lambda () (proc s))))
-    (reset s)))
+  ;; Warning: if you remove test for (statement? s) in fast-unwind-protect*
+  ;; abnormal exit, you must test it before entry like:
+  ;; (unless (statement? s)
+  ;;   (error 'query* "not a statement" s))
+  (fast-unwind-protect*
+   (proc s)
+   (reset s)
+   (unless (and (statement? s) (finalized? s))
+     (reset-unconditionally s))))
 
 ;; Resurrects s, binds args to s and performs an exec*.
 (define (exec s . args)
