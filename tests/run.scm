@@ -279,9 +279,7 @@
               (step s1)
               (error 'oops))))))
 (test "Prepared statements are FINALIZED? after QUERY bind error (cache disabled)"
-      ;; They are finalized (you may receive a warning), but don't show
-      ;; up as FINALIZED?.  Currently, we do not confirm finalization
-      ;; other than through manually inspecting the warning.
+      ;; Ensure QUERY finalizes uncached statements in case of bind error.
       ;; FIXME: We test QUERY here but not EXEC.
       #t
       (let ((s1 #f) (db0 #f))
@@ -296,6 +294,35 @@
                (set! s1 (sql db "select * from sqlite_master where sql=?"))
                (query fetch s1 'foo)
                #t))))))
+#;
+(test "Prepared statements are FINALIZED? after QUERY bind error (expired)"
+      ;; Ensure QUERY finalizes statements expired from cache in case of bind error.
+      ;; This is a roundabout way of testing whether the cached flag is removed
+      ;; from cached statements after they expire.  Incomplete implementation -- doesn't
+      ;; look like this bug can be triggered, because the statement can have four
+      ;; states: 1) cached flag with ptr non-null (resurrected/prepared statement in cache);
+      ;;         2) cached flag with ptr null (finalized statement expired from cache);
+      ;;         3) no cached flag with ptr non-null (transient prepared statement);
+      ;;         4) no cached flag with ptr null  (transient finalized statement).
+      ;; and cached flag is only tested in two situations:
+      ;;         1) directly after resurrect in QUERY/EXEC, so the statement must be in state #1 or #3
+      ;;         2) in finalize, but statement must also have ptr non-null to pass finalize-transient,
+      ;;            so must be in state #1 or #3
+      ;; FIXME: We test QUERY here but not EXEC.
+      #t
+      (let ((s1 #f) (db0 #f))
+        (handle-exceptions ex
+            (and (finalized? s1) (database-closed? db0))
+          (parameterize ((prepared-cache-size 1))
+            (call-with-database
+             ":memory:"
+             (lambda (db)
+               (set! db0 db)
+               ;; Generate a bind error (symbol is invalid argument type)
+               (set! s1 (sql db "select * from sqlite_master where sql=?"))
+               (query fetch s1 'foo)
+               #t))))))
+
 (test "Cached statements are finalized on error in call-with-database"
       #t
       (let ((s1 #f) (s2 #f) (db0 #f))
