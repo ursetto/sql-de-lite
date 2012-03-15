@@ -8,6 +8,9 @@
 (define-syntax string-literal
   (lambda (f r c)
     (apply string-append (cdr f))))
+(define-syntax begin0                 ; multiple values discarded
+  (syntax-rules () ((_ e0 e1 ...)
+                    (let ((tmp e0)) e1 ... tmp))))
 
 #|
 
@@ -452,6 +455,22 @@
                 db "insert into cache values('jml', 'oak');")))))
     (and (not (database-closed? db0))
          (= 1 (exec s))))))
+
+(test
+ "Resurrected transient statement is still transient"
+ #t
+ (call-with-database
+  ":memory:"
+  (lambda (db)
+    (let ((s (prepare-transient db "select 1;")))
+      (finalize s)
+      (assert (finalized? s) "statement not finalized")
+      (resurrect s)
+      (assert (not (finalized? s)) "statement finalized")
+      (finalize s)
+      (begin0
+        (finalized? s)
+        (finalize s))))))
 
 (test "Successful rollback outside transaction"
       #t
