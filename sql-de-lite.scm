@@ -182,7 +182,7 @@ int busy_notification_handler(void *ctx, int times) {
                parameter-count cached? run-state)
   handle?
   (ptr handle-ptr set-handle-ptr!)
-  (column-names handle-column-names)
+  (column-names handle-column-names set-handle-column-names!)
   (parameter-count handle-parameter-count)
   ;; cached? flag avoids a cache-ref to check existence.
   (cached? handle-cached? set-handle-cached!)
@@ -195,6 +195,8 @@ int busy_notification_handler(void *ctx, int times) {
   (set-handle-ptr! (statement-handle s) p))
 (define (statement-column-names s)
   (handle-column-names (statement-handle s)))
+(define (set-statement-column-names! s v)
+  (set-handle-column-names! (statement-handle s) v))
 (define (statement-parameter-count s)
   (handle-parameter-count (statement-handle s)))
 (define (statement-cached? s)
@@ -395,10 +397,10 @@ int busy_notification_handler(void *ctx, int times) {
                                     #f)))
         (cond ((= rv status/ok)
                (if stmt
-                   (let* ((ncol (sqlite3_column_count stmt))
-                          (nparam (sqlite3_bind_parameter_count stmt))
-                          (names (make-vector ncol #f)))
-                     (make-handle stmt names nparam
+                   (let* ((nparam (sqlite3_bind_parameter_count stmt)))
+                     (make-handle stmt
+                                  #f ; names
+                                  nparam
                                   #f 0)) ; cached? run-state
                    #f))     ; not an error, even when raising errors
               ((= rv status/busy)
@@ -516,6 +518,10 @@ int busy_notification_handler(void *ctx, int times) {
 (define (reset-unconditionally stmt)
   (sqlite3_reset (nonnull-statement-ptr stmt))
   (set-statement-reset! stmt)
+  ;; Invalidate the column name cache, as schema can now change, and
+  ;; we have no other way to detect such.  Another option is to invalidate
+  ;; when (step) changes state to running.
+  (set-statement-column-names! stmt #f)
   stmt)
 
 (define (bind-parameters stmt . params)
@@ -592,11 +598,18 @@ int busy_notification_handler(void *ctx, int times) {
           (loop (+ i 1) (cons (column-name stmt i) L))))))
 (define (column-name stmt i)    ;; Get result set column names, lazily.
   (let ((v (statement-column-names stmt)))
-    (or (vector-ref v i)
+    (if v
+        (or (vector-ref v i)
+            (let ((name (string->symbol
+                         (sqlite3_column_name (nonnull-statement-ptr stmt) i))))
+              (vector-set! v i name)
+              name))
         (let ((name (string->symbol
-                     (sqlite3_column_name (nonnull-statement-ptr stmt)
-                                          i))))
-          (vector-set! v i name)
+                     (sqlite3_column_name (nonnull-statement-ptr stmt) i))))
+          (when (statement-running? stmt)  ;; Or, invalidate column names in (step) when switching to running.
+            (let ((v (make-vector (column-count stmt) #f)))
+              (vector-set! v i name)
+              (set-statement-column-names! stmt v)))
           name))))
 (define (column-type stmt i)
   ;; can't be cached, only valid for current row

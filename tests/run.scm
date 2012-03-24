@@ -581,7 +581,7 @@
       ))))
 
 (test-group
- "known bugs"
+ "schema changes"
  (call-with-database
   'memory
   (lambda (db)
@@ -599,22 +599,19 @@
       ;; However, we cache the number of columns and column names in the statement handle object,
       ;; assuming they have been accessed once.  Subsequently row results will be incorrect until
       ;; the handle object is rebuilt (which will only happen if the statement is flushed from cache).
-      (test "Existing statements ignore new column after ALTER TABLE ADD COLUMN"
-            '((bar . 2) (baz . 3))
-            ;; '((bar . 2) (baz . 3) (quux . 4))          ;; <-- the correct behavior
+      (test "Existing statements recognize new column after ALTER TABLE ADD COLUMN"
+            '((bar . 2) (baz . 3) (quux . 4))
             (query fetch-alist s))
       (exec (sql db "alter table foo rename to foo_tmp;"))
       ;; s is now expected to be invalid, as the table name changed
       (exec (sql db "create table foo as select bar as bar1, baz as baz1, quux as quux1 from foo_tmp;"))
-      (test "Existing statements ignore column changes after table copy"
-            '((bar . 2) (baz . 3))
-            ;; '((bar1 . 2) (baz1 . 3) (quux1 . 4))          ;; <-- the correct behavior
+      (test "Existing statements recognize column changes after table copy"
+            '((bar1 . 2) (baz1 . 3) (quux1 . 4))
             (query fetch-alist s))
       ;; Sanity check--same behavior as previous, but with a new (sql db ...) statement instead of existing one;
       ;; the handle is still pulled from cache.
-      (test "Existing statements ignore column changes after table copy (2)"
-            '((bar . 2) (baz . 3))
-            ;; '((bar1 . 2) (baz1 . 3) (quux1 . 4))          ;; <-- the correct behavior
+      (test "Existing statements recognize column changes after table copy (2)"
+            '((bar1 . 2) (baz1 . 3) (quux1 . 4))
             (query fetch-alist (sql db "select * from foo")))
       (test "Baseline: Column changes take effect if cache bypassed"
             '((bar1 . 2) (baz1 . 3) (quux1 . 4))
@@ -630,29 +627,43 @@
     (exec (sql db "insert into foo2(bar,baz) values(2,3);"))
     (let ((s (prepare db "select * from foo2")))
       ;; Done by definition in fetch-alist, but we need to open the statement for the next test.
-      (test "Baseline: Test column count of open, idle statement" 2 (column-count s))
+      (test "Baseline: Test column count of prepared statement" 2 (column-count s))
+      (test "Baseline: Test column names of prepared statement"
+            '(bar baz)
+            (column-names s))      
       (exec (sql db "alter table foo2 add column quux;"))
       ;; Test that column count is correct even though statement has not been reset.
       ;; A possible (incorrect) implementation is to invalidate cached column data after reset
       ;; but permit caching while statement is open and inactive, even though schema may still change.
-      (test "Test column count of open, idle statement after adding column"
+      ;; Note that these next two tests will NOT register a change, because the statement
+      ;; is only re-prepared during sqlite_step.
+      (test "Column count of idle statement does not reflect ADD COLUMN"
             2
-            ;; 3 ;; <--- the correct behavior
             (column-count s))
-      ;; Once statement is running, schema cannot change.
-      (test "Test column count of open, running statement"
-            2
-            ;; 3 ;; <--- the correct behavior
+      (test "Column names of idle statement do not reflect ADD COLUMN"
+            '(bar baz)
+            (column-names s))
+      ;; Stepping statement will re-prepare so we should see a change.
+      ;; Also, once statement is running, schema cannot change.
+      (test "Column count of running statement reflects ADD COLUMN"
+            3
             (begin
               (step s)
               (column-count s)))
-      (test "Test column count of open, reset statement"
-            2
-            ;; 3 ;; <--- the correct behavior
+      (test "Column names of running statement reflects ADD COLUMN"
+            '(bar baz quux)
+            (begin
+              (column-names s)))
+      (test "Column count of reset statement reflects ADD COLUMN"
+            3
             (begin
               (reset s)
-              (column-count s))))))
-
+              (column-count s)))
+      (test "Column count of reset statement reflects ADD COLUMN"
+            '(bar baz quux)
+            (begin
+              (column-names s)))
+      )))
  )
 
 (test-group
