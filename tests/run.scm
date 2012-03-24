@@ -581,6 +581,50 @@
       ))))
 
 (test-group
+ "known bugs"
+ (call-with-database
+  'memory
+  (lambda (db)
+    (exec (sql db "create table foo(bar,baz);"))
+    (exec (sql db "insert into foo(bar,baz) values(2,3);"))
+    (let ((s (sql db "select * from foo")))
+      ;; Baseline tests below are not bugs, just asserts.  If we use regular 'assert'
+      ;; and it fails, the test egg reports an error but doesn't include it in (test-exit).
+      (test "Baseline: Initial table setup"   ;; Run statement once, obtaining column count & names.
+            '((bar . 2) (baz . 3))
+            (query fetch-alist s))
+      (exec (sql db "alter table foo add column quux;"))
+      (exec (sql db "update foo set quux=4 where bar=2;"))
+      ;; If a statement is stepped and the schema has changed, SQLite re-prepares it transparently.
+      ;; However, we cache the number of columns and column names in the statement handle object,
+      ;; assuming they have been accessed once.  Subsequently row results will be incorrect until
+      ;; the handle object is rebuilt (which will only happen if the statement is flushed from cache).
+      (test "Existing statements ignore new column after ALTER TABLE ADD COLUMN"
+            '((bar . 2) (baz . 3))
+            ;; '((bar . 2) (baz . 3) (quux . 4))          ;; <-- the correct behavior
+            (query fetch-alist s))
+      (exec (sql db "alter table foo rename to foo_tmp;"))
+      ;; s is now expected to be invalid, as the table name changed
+      (exec (sql db "create table foo as select bar as bar1, baz as baz1, quux as quux1 from foo_tmp;"))
+      (test "Existing statements ignore column changes after table copy"
+            '((bar . 2) (baz . 3))
+            ;; '((bar1 . 2) (baz1 . 3) (quux1 . 4))          ;; <-- the correct behavior
+            (query fetch-alist s))
+      ;; Sanity check--same behavior as previous, but with a new (sql db ...) statement instead of existing one;
+      ;; the handle is still pulled from cache.
+      (test "Existing statements ignore column changes after table copy (2)"
+            '((bar . 2) (baz . 3))
+            ;; '((bar1 . 2) (baz1 . 3) (quux1 . 4))          ;; <-- the correct behavior
+            (query fetch-alist (sql db "select * from foo")))
+      (test "Baseline: Column changes take effect if cache bypassed"
+            '((bar1 . 2) (baz1 . 3) (quux1 . 4))
+            (query fetch-alist (sql db "select * from foo;")))    ;; Add semicolon so cache string=? fails
+      (flush-cache! db)
+      (test "Baseline: Column changes take effect after cache flush"
+            '((bar1 . 2) (baz1 . 3) (quux1 . 4))
+            (query fetch-alist s))))))
+
+(test-group
  "multiple connections"
  (let ((db-name (create-temporary-file "db")))
    (call-with-database db-name
