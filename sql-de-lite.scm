@@ -178,11 +178,10 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Internal record making up the guts of a prepared statement;
 ;; always embedded in a sqlite-statement.
 (define-record-type sqlite-statement-handle
-  (make-handle ptr column-count column-names
+  (make-handle ptr column-names
                parameter-count cached? run-state)
   handle?
   (ptr handle-ptr set-handle-ptr!)
-  (column-count handle-column-count)
   (column-names handle-column-names)
   (parameter-count handle-parameter-count)
   ;; cached? flag avoids a cache-ref to check existence.
@@ -194,8 +193,6 @@ int busy_notification_handler(void *ctx, int times) {
   (handle-ptr (statement-handle s)))
 (define (set-statement-ptr! s p)
   (set-handle-ptr! (statement-handle s) p))
-(define (statement-column-count s)
-  (handle-column-count (statement-handle s)))
 (define (statement-column-names s)
   (handle-column-names (statement-handle s)))
 (define (statement-parameter-count s)
@@ -401,7 +398,7 @@ int busy_notification_handler(void *ctx, int times) {
                    (let* ((ncol (sqlite3_column_count stmt))
                           (nparam (sqlite3_bind_parameter_count stmt))
                           (names (make-vector ncol #f)))
-                     (make-handle stmt ncol names nparam
+                     (make-handle stmt names nparam
                                   #f 0)) ; cached? run-state
                    #f))     ; not an error, even when raising errors
               ((= rv status/busy)
@@ -585,7 +582,8 @@ int busy_notification_handler(void *ctx, int times) {
   (sqlite3_total_changes (nonnull-db-ptr db)))
 (define (last-insert-rowid db)
   (sqlite3_last_insert_rowid (nonnull-db-ptr db)))
-(define column-count statement-column-count)
+(define (column-count stmt)
+  (sqlite3_column_count (nonnull-statement-ptr stmt)))
 (define (column-names stmt)
   (let loop ((i 0) (L '()))
     (let ((c (column-count stmt)))
