@@ -622,7 +622,38 @@
       (flush-cache! db)
       (test "Baseline: Column changes take effect after cache flush"
             '((bar1 . 2) (baz1 . 3) (quux1 . 4))
-            (query fetch-alist s))))))
+            (query fetch-alist s)))))
+ (call-with-database
+  'memory
+  (lambda (db)
+    (exec (sql db "create table foo2(bar,baz);"))
+    (exec (sql db "insert into foo2(bar,baz) values(2,3);"))
+    (let ((s (prepare db "select * from foo2")))
+      ;; Done by definition in fetch-alist, but we need to open the statement for the next test.
+      (test "Baseline: Test column count of open, idle statement" 2 (column-count s))
+      (exec (sql db "alter table foo2 add column quux;"))
+      ;; Test that column count is correct even though statement has not been reset.
+      ;; A possible (incorrect) implementation is to invalidate cached column data after reset
+      ;; but permit caching while statement is open and inactive, even though schema may still change.
+      (test "Test column count of open, idle statement after adding column"
+            2
+            ;; 3 ;; <--- the correct behavior
+            (column-count s))
+      ;; Once statement is running, schema cannot change.
+      (test "Test column count of open, running statement"
+            2
+            ;; 3 ;; <--- the correct behavior
+            (begin
+              (step s)
+              (column-count s)))
+      (test "Test column count of open, reset statement"
+            2
+            ;; 3 ;; <--- the correct behavior
+            (begin
+              (reset s)
+              (column-count s))))))
+
+ )
 
 (test-group
  "multiple connections"
