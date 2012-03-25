@@ -372,6 +372,23 @@
           (exec (sql db "create table cache(k,v);"))
           (exec (sql db "insert into cache values('jml', 'oak');")))))
 
+(define (check-error-status code thunk)
+  (condition-case (begin (thunk) #f)
+   (e (exn sqlite) (eqv? code (sqlite-exception-status e)))))
+
+(call-with-database
+ ":memory:"
+ (lambda (db)
+   (test-assert
+    "empty SQL is illegal"
+    (check-error-status 'ok (lambda () (prepare db ""))))   
+   (test-assert
+    "whitespace SQL is illegal"
+    (check-error-status 'ok (lambda () (prepare db " "))))
+   (test-assert
+    "comment-only SQL is illegal"
+    (check-error-status 'ok (lambda () (prepare db "-- comment"))))))
+
 (test-group
  "finalization"
  (test ;; operation on finalized statement

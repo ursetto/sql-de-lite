@@ -402,7 +402,11 @@ int busy_notification_handler(void *ctx, int times) {
                                   #f ; names
                                   nparam
                                   #f 0)) ; cached? run-state
-                   #f))     ; not an error, even when raising errors
+                   ;; Not strictly an error, but to handle it properly we must
+                   ;; create a dummy statement and change all statement interfaces
+                   ;; to respect it; until then, we'll make it illegal.
+                   (database-error db rv 'prepare sql     ;; FIXME: This will show "not an error" error.
+                                   "attempted to prepare whitespace or comment SQL")))
               ((= rv status/busy)
                (let ((bh (db-busy-handler db)))
                  (if (and bh
