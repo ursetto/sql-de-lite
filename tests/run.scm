@@ -341,6 +341,22 @@
                (query fetch s1 'foo)
                #t))))))
 
+(call-with-database
+ ":memory:"
+ (lambda (db)
+   (let ((s (sql/transient db "select 1 union select 2")))
+     (test-assert "sql/transient statements are initially finalized"
+                  (finalized? s))
+     ;; This is functionally the same as the (sql ...) example above with cache-size 0,
+     ;; but we want to be thorough.
+     (test-assert "sql/transient statements are finalized after QUERY error"
+                  (begin
+                    (handle-exceptions e #f
+                      (query (lambda (s) (step s) (error))
+                             s))
+                    (finalized? s))))))
+
+
 (test "Cached statements are finalized on error in call-with-database"
       #t
       (let ((s1 #f) (s2 #f) (db0 #f))

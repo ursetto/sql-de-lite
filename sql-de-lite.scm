@@ -42,7 +42,7 @@ int busy_notification_handler(void *ctx, int times) {
   set-busy-handler! busy-timeout
 
   ;; advanced interface
-  query query* exec exec* sql
+  query query* exec exec* sql sql/transient
 
   ;; parameters
   raise-database-errors
