@@ -166,11 +166,12 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Thin wrapper around sqlite-statement-handle, adding the two keys
 ;; which allows us to reconstitute a finalized statement.
 (define-record-type sqlite-statement
-  (make-statement db sql handle)
+  (make-statement db sql handle transient?)
   statement?
   (db  statement-db)
   (sql statement-sql)
-  (handle statement-handle set-statement-handle!))
+  (handle statement-handle set-statement-handle!)
+  (transient? statement-transient? set-statement-transient!))
 (define-record-printer (sqlite-statement s p)
   (fprintf p "#<sqlite-statement ~S>"
            (statement-sql s)))
@@ -233,15 +234,15 @@ int busy_notification_handler(void *ctx, int times) {
 ;;; High-level interface
 
 (define (sql db sql-str)
-  (make-statement db sql-str #f))     ; (finalized? s) => #t
+  (make-statement db sql-str #f #f))     ; (finalized? s) => #t
+(define (sql/transient db sql-str)
+  (make-statement db sql-str #f #t))
 
 ;; Resurrects finalized statement s or, if still live, just resets it.
 ;; Returns s, which is also modified in place.
 (define (resurrect s)                ; inline
   (cond ((finalized? s)
-         (let ((sn (prepare (statement-db s) (statement-sql s))))
-           (set-statement-handle! s (statement-handle sn))
-           s))
+         (prepare! s))
         (else
          (reset s))))
 
@@ -418,33 +419,49 @@ int busy_notification_handler(void *ctx, int times) {
                (database-error db rv 'prepare sql)))))))
 
 ;; Looks up a prepared statement in the statement cache.  If not
-;; found, it prepares a statement and caches it.  An exception is
+;; found, it prepares a statement and caches it.  If transient,
+;; the cache is ignored.  An exception is
 ;; thrown if a statement we pulled from cache is currently running
 ;; (we could just warn and reset, if this causes problems).
 ;; Statements are also marked as cached, so FINALIZE is a no-op.
-(define (prepare db sql)
-  (let ((c (db-statement-cache db)))
-    (cond ((lru-cache-ref c sql)
-           => (lambda (s)
-                (cond ((statement-running? s)
-                       (error 'prepare
-                              "cached statement is currently executing" s))
-                      ((statement-done? s)
-                       (reset s))
-                      (else s))))
-          ((prepare-handle db sql)
-           => (lambda (h)
-                (let ((s (make-statement db sql h)))
-                  (when (> (lru-cache-capacity c) 0)
-                    (set-handle-cached! h #t)
-                    (lru-cache-set! c sql s))
-                  s)))
-          (else #f))))
+;; PREPARE! is internal; it expects a statement S which has already
+;; been allocated, and mutates the statement handle.  Returns S on
+;; success or throws an error on failure (or returns #f if errors are disabled).
+(define (prepare! s)
+  (let* ((db  (statement-db s))
+         (sql (statement-sql s))
+         (c (db-statement-cache db)))
+    (define (get-handle)
+      (cond ((or (statement-transient? s)
+                 (= 0 (lru-cache-capacity c)))
+             (prepare-handle db sql))
+            (else
+             (cond ((lru-cache-ref c sql)
+                    => (lambda (s)
+                         (cond ((statement-running? s)
+                                (error 'prepare
+                                       "cached statement is currently executing" s))
+                               ((statement-done? s)
+                                (reset s)))
+                         (statement-handle s)))
+                   ((prepare-handle db sql)
+                    => (lambda (h)
+                         (when (> (lru-cache-capacity c) 0)
+                           (set-handle-cached! h #t)
+                           (lru-cache-set! c sql s)) ;; s's handle slot will later be mutated
+                         h))
+                   (else #f)))))
+    (and-let* ((h (get-handle)))
+      (set-statement-handle! s h)
+      s)))
+
+(define (prepare db sqlst)
+  (resurrect (sql db sqlst)))
 
 ;; Bypass cache when preparing statement.  Might occasionally be
 ;; useful, but this call may also be removed.
-(define (prepare-transient db sql)
-  (make-statement db sql (prepare-handle db sql)))
+(define (prepare-transient db sqlst)
+  (resurrect (sql/transient db sqlst)))
 
 ;; Returns #f on error, 'row on SQLITE_ROW, 'done on SQLITE_DONE.
 ;; On error or busy, statement is reset.   Oddly, one of the benefits of
