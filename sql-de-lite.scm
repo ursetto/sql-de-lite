@@ -28,7 +28,7 @@ int busy_notification_handler(void *ctx, int times) {
   fetch-column fetch-row fetch-rows fetch-alists
   column-count column-name column-type column-data
   column-names                         ; convenience
-  bind bind-parameters bind-parameter-count
+  bind bind-parameters bind-parameter-count bind-parameter-name
   library-version                      ; string, not proc
   row-data row-alist
   reset ;reset-unconditionally         ; core binding!
@@ -602,6 +602,9 @@ int busy_notification_handler(void *ctx, int times) {
             (else (database-error (statement-db stmt) rv 'bind))))))
 
 (define bind-parameter-count statement-parameter-count)
+(define (bind-parameter-name s i)
+  (sqlite3_bind_parameter_name (nonnull-statement-ptr s)
+                               i))
 
 (define (change-count db)
   (sqlite3_changes (nonnull-db-ptr db)))
