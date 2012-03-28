@@ -545,19 +545,30 @@ int busy_notification_handler(void *ctx, int times) {
   (set-statement-column-names! stmt #f)
   stmt)
 
+;; Bind all params in order to stmt, allowing keyword arguments.
+;; Although we take care to give consistent results when mixing named,
+;; numeric and anonymous arguments in the same statement, actually doing
+;; so is not recommended.
 (define (bind-parameters stmt . params)
   (let ((count (bind-parameter-count stmt)))
-    ;; SQLITE_RANGE returned on range error; should we check against
-    ;; our own bind-parameter-count first, and if so, should it be
-    ;; a database error?  This is similar to calling Scheme proc
-    ;; with wrong arity, so perhaps it should error out.
-    (unless (= (length params) count)
-      (error 'bind-parameters "wrong number of parameters, expected" count))
-    (let loop ((i 1) (p params))
-      (cond ((null? p) stmt)
-            ((bind stmt i (car p))
-             (loop (+ i 1) (cdr p)))
-            (else #f)))))
+    (let loop ((i 1) (p params) (kw #f))
+      (if kw
+          (cond ((null? p)
+                 (error 'bind-parameters "keyword missing value" kw))
+                ((bind stmt (string-append ":" (keyword->string kw))
+                       (car p))
+                 (loop (+ i 1) (cdr p) #f))
+                (else #f))
+          (cond ((null? p)
+                 (unless (= (- i 1) count)
+                   ;; # of args unknown until entire params list is traversed, due to keywords.
+                   (error 'bind-parameters "wrong number of parameters, expected" count))
+                 stmt)
+                ((keyword? (car p))
+                 (loop i (cdr p) (car p)))
+                ((bind stmt i (car p))
+                 (loop (+ i 1) (cdr p) #f))
+                (else #f))))))
 
 ;; Bind parameter at index I of statement S to value X.  The variable
 ;; I may be an integer (the first parameter is 1, not 0) or a string
@@ -603,6 +614,7 @@ int busy_notification_handler(void *ctx, int times) {
 
 (define bind-parameter-count statement-parameter-count)
 (define (bind-parameter-name s i)
+  ;; FIXME: possibly do domain check on index.  I believe we have to check against bind-parameter-count
   (sqlite3_bind_parameter_name (nonnull-statement-ptr s)
                                i))
 

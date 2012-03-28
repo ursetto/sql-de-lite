@@ -633,6 +633,59 @@
       ))))
 
 (test-group
+ "named parameters"
+ (call-with-database
+  'memory
+  (lambda (db)
+    (define (tval params results . args)
+      (test (sprintf "~a ~a -> ~s" params args results)
+            (list results)
+            (begin
+              ;; Note: exec sql/transient to avoid using cached statements with bound parameters
+              ;; (since some of our tests explicitly do not set all params).
+              (apply exec (sql/transient db (string-append "insert into a(k,v) values(" params ");")) args)
+              (begin0 (query fetch-rows (sql db "select k,v from a where k=?") (car results))
+                (exec (sql db "delete from a where k=?") (car results))))))
+    (define (terr params . args)
+      (test-error (sprintf "~a ~a -> error" params args)
+                  (apply exec (sql/transient db (string-append "insert into a(k,v) values(" params ");")) args)))
+
+    (exec (sql db "create table a(k,v);"))
+    (tval "?,?"       '(1 2)   1 2)
+    (tval "?1,?2"     '(3 4)   3 4)
+    (tval "?2,?1"     '(5 6)   6 5)
+    (tval ":foo,:bar" '(7 8)   foo: 7 bar: 8)
+    (tval ":bar,:foo" '(9 10)  foo: 10 bar: 9)
+    (tval "?3,?1"     '(11 12) 12 13 11)
+    (terr ":foo,:bar"          foo: 30)         ;; arity error
+    (terr ":foo,:bar"          fuu: 30 bar: 31) ;; name error
+    
+    ;; Mixed use; works, but perhaps should be avoided (and behavior unspecified?)
+    (test-group
+     "mixed named and positional"
+     (tval ":foo,?"    '(13 14) foo: 13 14)
+     (tval ":foo,?"    '(16 ()) 15 foo: 16)
+     (tval "?,:foo"    '(17 18) 17 foo: 18)
+
+     (terr ":foo,?1"            foo: 100)      ;; error: no such param
+     (tval ":foo,?1" '(100 100) 100)
+     (terr "?1,:foo"            101)           ;; arity error
+     (terr "?1,:foo"            foo: 102)      ;; arity error
+     (tval ":foo,:bar" '(103 104) foo: 103 104)
+     (tval ":foo,:bar" '(103 104) 103 104)
+     (tval "?3,:foo" '(3 4) 1 2 3 4)
+     (tval "?3,:foo" '(3 4) foo: 1 2 3 4)      ;; basically nonsense
+     )
+
+    ;; known bugs
+    (test-group "known issues"
+                (tval ":foo,:bar" '(0 ()) foo: 0 foo: 0)            ;; no error
+                (terr ":foo,:bar"          foo: 1 bar: 2 bar: 3)    ;; arity error.  not an important bug
+                )
+    
+    )))
+
+(test-group
  "schema changes"
  (call-with-database
   'memory
