@@ -63,6 +63,9 @@ int busy_notification_handler(void *ctx, int times) {
 
   finalized?
   database-closed?
+
+  ;; user-defined functions
+  register-scalar-function!
   )
 
 (import scheme
@@ -130,6 +133,7 @@ int busy_notification_handler(void *ctx, int times) {
   sqlite3:destructor-type "SQLITE_TRANSIENT")
 (define-foreign-variable destructor-type/static
   sqlite3:destructor-type "SQLITE_STATIC")
+
 (define library-version (foreign-value "sqlite3_version" c-string))
 
 ;;; Parameters
@@ -999,6 +1003,43 @@ int busy_notification_handler(void *ctx, int times) {
                     (else
                      (thread-sleep!/ms delay)
                      #t))))))))))
+
+;;; User-defined functions
+
+(define make-gc-root           ;; Create non-finalizable GC root pointing to OBJ
+  (foreign-lambda* c-pointer ((scheme-object obj))
+    "void *root = CHICKEN_new_gc_root();"
+    "CHICKEN_gc_root_set(root, obj);"
+    "return(root);"))
+(define gc-root-ref
+  (foreign-lambda scheme-object CHICKEN_gc_root_ref c-pointer))
+;; (define free-gc-root
+;;   (foreign-lambda void CHICKEN_delete_gc_root c-pointer))
+
+(define-external (scalar_callback (c-pointer ctx) (int n) (c-pointer args))
+  void
+  (foreign-code "C_disable_interrupts();")
+  (handle-exceptions exn
+      (sqlite3_result_error ctx "Scheme error" -1)
+    (let ((data (gc-root-ref (sqlite3_user_data ctx))))
+      (sqlite3_result_int64 ctx 47)))
+  (foreign-code "C_enable_interrupts();"))
+
+(define (register-scalar-function! db name nargs proc)
+  (let ((name name)  ; ->string ?
+        (data (make-gc-root (cons db name))))
+    (sqlite3_create_function_v2 (nonnull-db-ptr db)
+                                name
+                                nargs
+                                (foreign-value "SQLITE_UTF8" int)
+                                data
+                                (foreign-value "scalar_callback" c-pointer)
+                                #f
+                                #f
+                                (foreign-value "CHICKEN_delete_gc_root" c-pointer))))
+
+
+
 
   )  ; module
 

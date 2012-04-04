@@ -23,7 +23,7 @@ int sqlite3_prepare_v2(
   const char **pzTail     /* OUT: Pointer to unused portion of zSql */
 );
 sqlite3_stmt *sqlite3_next_stmt(sqlite3 *pDb, sqlite3_stmt *pStmt);
-int sqlite3_step(sqlite3_stmt *);
+___safe int sqlite3_step(sqlite3_stmt *);
 int sqlite3_reset(sqlite3_stmt *pStmt);
 int sqlite3_finalize(sqlite3_stmt *pStmt);
 int sqlite3_changes(sqlite3*);
@@ -62,4 +62,35 @@ const char *sqlite3_column_name(sqlite3_stmt*, int N);
 int sqlite3_busy_handler(sqlite3*, int(*)(void*,int), void*);
 int sqlite3_busy_timeout(sqlite3*, int ms);
 
+/* user-defined functions */
 
+int sqlite3_create_function_v2(
+  sqlite3 *db,
+  const char *zFunctionName,
+  int nArg,
+  int eTextRep,
+  void *pApp,
+  void (*xFunc)(sqlite3_context*,int,sqlite3_value**),
+  void (*xStep)(sqlite3_context*,int,sqlite3_value**),
+  void (*xFinal)(sqlite3_context*),
+  void(*xDestroy)(void*)
+);
+
+void sqlite3_result_blob(sqlite3_context*, const void*, int, void(*)(void*));
+void sqlite3_result_double(sqlite3_context*, double);
+void sqlite3_result_error(sqlite3_context*, const char*, int);
+void sqlite3_result_error16(sqlite3_context*, const void*, int);
+void sqlite3_result_error_toobig(sqlite3_context*);
+void sqlite3_result_error_nomem(sqlite3_context*);
+void sqlite3_result_error_code(sqlite3_context*, int);
+void sqlite3_result_int(sqlite3_context*, int);
+void sqlite3_result_int64(sqlite3_context*, int64_t);       /* sqlite3_int64 -> int64_t */
+void sqlite3_result_null(sqlite3_context*);
+void sqlite3_result_text(sqlite3_context*, const char*, int, void(*)(void*));
+void sqlite3_result_text16(sqlite3_context*, const void*, int, void(*)(void*));
+void sqlite3_result_text16le(sqlite3_context*, const void*, int,void(*)(void*));
+void sqlite3_result_text16be(sqlite3_context*, const void*, int,void(*)(void*));
+void sqlite3_result_value(sqlite3_context*, sqlite3_value*);
+void sqlite3_result_zeroblob(sqlite3_context*, int n);
+
+void *sqlite3_user_data(sqlite3_context*);

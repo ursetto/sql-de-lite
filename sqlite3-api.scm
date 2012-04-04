@@ -58,7 +58,7 @@
         (c-pointer "sqlite3_stmt"))))
   (begin
     (define sqlite3_step
-      (foreign-lambda integer "sqlite3_step" (c-pointer "sqlite3_stmt"))))
+      (foreign-safe-lambda integer "sqlite3_step" (c-pointer "sqlite3_stmt"))))
   (begin
     (define sqlite3_reset
       (foreign-lambda integer "sqlite3_reset" (c-pointer "sqlite3_stmt"))))
@@ -238,6 +238,155 @@
         integer
         "sqlite3_busy_timeout"
         (c-pointer "sqlite3")
-        integer))))
+        integer)))
+  (begin
+    (define sqlite3_create_function_v2
+      (foreign-lambda
+        integer
+        "sqlite3_create_function_v2"
+        (c-pointer "sqlite3")
+        c-string
+        integer
+        integer
+        (c-pointer void)
+        (function
+          void
+          ((c-pointer "sqlite3_context")
+           integer
+           (c-pointer (c-pointer "sqlite3_value"))))
+        (function
+          void
+          ((c-pointer "sqlite3_context")
+           integer
+           (c-pointer (c-pointer "sqlite3_value"))))
+        (function void ((c-pointer "sqlite3_context")))
+        (function void ((c-pointer void))))))
+  (begin
+    (define sqlite3_result_blob
+      (foreign-lambda
+        void
+        "sqlite3_result_blob"
+        (c-pointer "sqlite3_context")
+        (c-pointer void)
+        integer
+        (function void ((c-pointer void))))))
+  (begin
+    (define sqlite3_result_double
+      (foreign-lambda
+        void
+        "sqlite3_result_double"
+        (c-pointer "sqlite3_context")
+        double)))
+  (begin
+    (define sqlite3_result_error
+      (foreign-lambda
+        void
+        "sqlite3_result_error"
+        (c-pointer "sqlite3_context")
+        c-string
+        integer)))
+  (begin
+    (define sqlite3_result_error16
+      (foreign-lambda
+        void
+        "sqlite3_result_error16"
+        (c-pointer "sqlite3_context")
+        (c-pointer void)
+        integer)))
+  (begin
+    (define sqlite3_result_error_toobig
+      (foreign-lambda
+        void
+        "sqlite3_result_error_toobig"
+        (c-pointer "sqlite3_context"))))
+  (begin
+    (define sqlite3_result_error_nomem
+      (foreign-lambda
+        void
+        "sqlite3_result_error_nomem"
+        (c-pointer "sqlite3_context"))))
+  (begin
+    (define sqlite3_result_error_code
+      (foreign-lambda
+        void
+        "sqlite3_result_error_code"
+        (c-pointer "sqlite3_context")
+        integer)))
+  (begin
+    (define sqlite3_result_int
+      (foreign-lambda
+        void
+        "sqlite3_result_int"
+        (c-pointer "sqlite3_context")
+        integer)))
+  (begin
+    (define sqlite3_result_int64
+      (foreign-lambda
+        void
+        "sqlite3_result_int64"
+        (c-pointer "sqlite3_context")
+        integer64)))
+  (begin
+    (define sqlite3_result_null
+      (foreign-lambda
+        void
+        "sqlite3_result_null"
+        (c-pointer "sqlite3_context"))))
+  (begin
+    (define sqlite3_result_text
+      (foreign-lambda
+        void
+        "sqlite3_result_text"
+        (c-pointer "sqlite3_context")
+        c-string
+        integer
+        (function void ((c-pointer void))))))
+  (begin
+    (define sqlite3_result_text16
+      (foreign-lambda
+        void
+        "sqlite3_result_text16"
+        (c-pointer "sqlite3_context")
+        (c-pointer void)
+        integer
+        (function void ((c-pointer void))))))
+  (begin
+    (define sqlite3_result_text16le
+      (foreign-lambda
+        void
+        "sqlite3_result_text16le"
+        (c-pointer "sqlite3_context")
+        (c-pointer void)
+        integer
+        (function void ((c-pointer void))))))
+  (begin
+    (define sqlite3_result_text16be
+      (foreign-lambda
+        void
+        "sqlite3_result_text16be"
+        (c-pointer "sqlite3_context")
+        (c-pointer void)
+        integer
+        (function void ((c-pointer void))))))
+  (begin
+    (define sqlite3_result_value
+      (foreign-lambda
+        void
+        "sqlite3_result_value"
+        (c-pointer "sqlite3_context")
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_result_zeroblob
+      (foreign-lambda
+        void
+        "sqlite3_result_zeroblob"
+        (c-pointer "sqlite3_context")
+        integer)))
+  (begin
+    (define sqlite3_user_data
+      (foreign-lambda
+        (c-pointer void)
+        "sqlite3_user_data"
+        (c-pointer "sqlite3_context")))))
 
 ;;; END OF FILE
