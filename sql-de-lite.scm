@@ -1016,18 +1016,43 @@ int busy_notification_handler(void *ctx, int times) {
 ;; (define free-gc-root
 ;;   (foreign-lambda void CHICKEN_delete_gc_root c-pointer))
 
+(define (%callback-result ctx x)
+  (cond ((string? x)
+         (sqlite3_result_text ctx x (string-length x) ;; Possible FIXME: Unnecessary extra copy of x
+                              destructor-type/transient))
+        ((number? x)
+         (if (exact? x)
+             (sqlite3_result_int64 ctx x) ;; Required for 64-bit.  Only int needed on 32 bit.
+             (sqlite3_result_double ctx x)))
+        ((blob? x)
+         (sqlite3_result_blob ctx x (blob-size x)
+                              destructor-type/transient))
+        ((null? x)
+         (sqlite3_result_null ctx))
+        ;; zeroblob is not supported
+        (else
+         (error 'callback "invalid result type" x))))
+
 (define-external (scalar_callback (c-pointer ctx) (int n) (c-pointer args))
   void
   (foreign-code "C_disable_interrupts();")
   (handle-exceptions exn
-      (sqlite3_result_error ctx "Scheme error" -1)
+      (sqlite3_result_error ctx ;; (or ((condition-property-accessor 'exn 'message) exn)
+                                ;;     "Unknown Scheme error")
+                            ;; Recommended to include exn location and objects, but may be dangerous.  FIXME.
+                            (sprintf "(~a) ~a: ~s"
+                                     ((condition-property-accessor 'exn 'location) exn)
+                                     ((condition-property-accessor 'exn 'message) exn)
+                                     ((condition-property-accessor 'exn 'arguments) exn))
+                            -1)
     (let ((data (gc-root-ref (sqlite3_user_data ctx))))
-      (sqlite3_result_int64 ctx 47)))
+      (let ((proc (cadr data)))
+        (%callback-result ctx (proc 47)))))
   (foreign-code "C_enable_interrupts();"))
 
 (define (register-scalar-function! db name nargs proc)
   (let ((name name)  ; ->string ?
-        (data (make-gc-root (cons db name))))
+        (data (make-gc-root (list db proc name))))
     (sqlite3_create_function_v2 (nonnull-db-ptr db)
                                 name
                                 nargs
