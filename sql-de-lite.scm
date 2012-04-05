@@ -1095,9 +1095,9 @@ int busy_notification_handler(void *ctx, int times) {
   (cond ((not proc)
          (unregister-function! db name nargs))
         (else
-         (##sys#check-string name)
-         (##sys#check-exact nargs)
-         (##sys#check-closure proc)
+         (##sys#check-string name 'register-scalar-function!)
+         (##sys#check-exact nargs 'register-scalar-function!)
+         (##sys#check-closure proc 'register-scalar-function!)
          (let ((dbptr (nonnull-db-ptr db))     ;; check type now before creating gc root
                (data (make-gc-root (make-scalar-data
                                     db name proc))))  ;; Note that DB and NAME are not currently used.
@@ -1173,10 +1173,10 @@ int busy_notification_handler(void *ctx, int times) {
   (cond ((not pstep)
          (unregister-function! db name nargs))
         (else
-         (##sys#check-string name)
-         (##sys#check-exact nargs)
-         (##sys#check-closure pstep)
-         (##sys#check-closure pfinal)
+         (##sys#check-string name 'register-aggregate-function!)
+         (##sys#check-exact nargs 'register-aggregate-function!)
+         (##sys#check-closure pstep 'register-aggregate-function!)
+         (##sys#check-closure pfinal 'register-aggregate-function!)
          (let* ((dbptr (nonnull-db-ptr db))   ;; check type now before creating gc root
                 (data (make-gc-root (make-aggregate-data
                                      db name pstep pfinal seed))))  ;; Note that DB and NAME are not currently used.
