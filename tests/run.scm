@@ -772,6 +772,38 @@
  )
 
 (test-group
+ "user defined functions"
+ (test-group
+  "scalar functions"
+  (call-with-database
+   'memory
+   (lambda (db)
+     (define (rsf! name nargs proc)
+       (register-scalar-function! db name nargs proc))
+     ;; type tests.  this also tests that overrides work (and don't crash immediately, at least)
+     (test "pass int, receive int"
+           '(4)
+           (begin (rsf! "foo" 1 (lambda (x) (+ x 1)))
+                  (exec (sql db "select foo(3);"))))
+     (test "pass double, receive double"
+           '(3.6)
+           (begin (rsf! "foo" 1 (lambda (x) (+ x 0.5)))
+                  (exec (sql db "select foo(3.1);"))))
+     (test "pass null, receive null"
+           '(())
+           (begin (rsf! "foo" 1 (lambda (x)
+                                  (unless (null? x) (error 'foo "expected null"))
+                                  '()))
+                  (exec (sql db "select foo(NULL);"))))
+     (test "pass string, receive string"
+           '("bar baz quux")
+           (begin (rsf! "foo" 1 (lambda (x) (string-append x " quux")))
+                  (exec (sql db "select foo('bar baz');"))))
+     
+     )))
+ )
+
+(test-group
  "multiple connections"
  (let ((db-name (create-temporary-file "db")))
    (call-with-database db-name
