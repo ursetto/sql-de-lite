@@ -630,6 +630,9 @@
             (blob->string (get "foo")))
       (test-error "invalid bound parameter type (procedure) throws error"
                   (get identity))
+      (test "select null blob value"
+            0
+            (blob-size (query fetch-value (sql db "select x''"))))
       ))))
 
 (test-group
