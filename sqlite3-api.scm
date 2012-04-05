@@ -421,7 +421,7 @@
   (begin
     (define sqlite3_value_text
       (foreign-lambda
-        (const (c-pointer unsigned-char))
+        c-string
         "sqlite3_value_text"
         (c-pointer "sqlite3_value"))))
   (begin

@@ -1052,6 +1052,7 @@ int busy_notification_handler(void *ctx, int times) {
             ((= t type/text)    (sqlite3_value_text v))
             ((= t type/null)    '())
             ((= t type/blob)
+             ;; FIXME: "return value of sqlite3_column_blob() for a zero-length BLOB is a NULL pointer."
              (let ((b (make-blob (sqlite3_value_bytes v))))
                (%copy! b (sqlite3_value_blob v) (blob-size b))
                b))
