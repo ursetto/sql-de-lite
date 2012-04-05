@@ -1066,6 +1066,8 @@ int busy_notification_handler(void *ctx, int times) {
         L
         (loop (fx- i 1) (cons (%value-data vals i) L)))))
 
+(define-record scalar-data db name proc)
+
 (define-external (scalar_callback (c-pointer ctx) (int nvals) (c-pointer vals))
   void
   (foreign-code "C_disable_interrupts();")
@@ -1079,7 +1081,7 @@ int busy_notification_handler(void *ctx, int times) {
                                      ((condition-property-accessor 'exn 'arguments) exn))
                             -1)
     (let ((data (gc-root-ref (sqlite3_user_data ctx))))
-      (let ((proc (cadr data)))
+      (let ((proc (scalar-data-proc data)))
         (%callback-result ctx (apply proc (parameter-data vals nvals))))))
   (foreign-code "C_enable_interrupts();"))
 
@@ -1087,18 +1089,41 @@ int busy_notification_handler(void *ctx, int times) {
   (cond ((not proc)
          (unregister-function! db name nargs))
         (else
+         (##sys#check-string name)
+         (##sys#check-exact nargs)
          (##sys#check-closure proc)
-         (let ((name name)              ; ->string ?
-               (data (make-gc-root (list db proc name))))
-           (sqlite3_create_function_v2 (nonnull-db-ptr db)
-                                       name
-                                       nargs
+         (let ((dbptr (nonnull-db-ptr db))     ;; check type now before creating gc root
+               (data (make-gc-root (make-scalar-data
+                                    db name proc))))  ;; Note that DB and NAME are not currently used.
+           (sqlite3_create_function_v2 dbptr name nargs
                                        (foreign-value "SQLITE_UTF8" int)
                                        data
                                        (foreign-value "scalar_callback" c-pointer)
                                        #f
                                        #f
                                        (foreign-value "CHICKEN_delete_gc_root" c-pointer))))))
+
+#|
+(define-record aggregate-data db name pstep pfinal seed)
+(define (register-aggregate-function! db name nargs pstep #!optional (pfinal identity))
+  (cond ((not pstep)
+         (unregister-function! db name nargs))
+        (else
+         (##sys#check-string name)
+         (##sys#check-exact nargs)
+         (##sys#check-closure pstep)
+         (##sys#check-closure pfinal)
+         (let* ((dbptr (nonnull-db-ptr db))   ;; check type now before creating gc root
+                (data (make-gc-root (make-aggregate-data
+                                     db name pstep pfinal seed))))  ;; Note that DB and NAME are not currently used.
+           (sqlite3_create_function_v2 dbptr name nargs
+                                       (foreign-value "SQLITE_UTF8" int)
+                                       data
+                                       #f
+                                       (foreign-value "aggregate_step_callback" c-pointer)
+                                       (foreign-value "aggregate_final_callback" c-pointer)
+                                       (foreign-value "CHICKEN_delete_gc_root" c-pointer))))))
+|#
 
 (define (unregister-function! db name nargs)
   (sqlite3_create_function_v2 (nonnull-db-ptr db)
