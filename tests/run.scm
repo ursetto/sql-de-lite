@@ -816,9 +816,26 @@
                                   (string->blob (string-append (blob->string x) "ghi"))))
                   (exec (sql db "select foo(x'6162630064656600')"))))
 
+     (test "pass 2 args"
+           '(5)
+           (begin (rsf! "foo" 2 (lambda (x y) (+ x y)))
+                  (exec (sql db "select foo(2,3);"))))
+     (test "pass multiple args"
+           '(10)
+           (begin (rsf! "foo" -1 +)
+                  (exec (sql db "select foo(1,2,3,4);"))))
+
+     (test "overload argument count"
+           '(11 5 120)
+           (begin (rsf! "foo" 1 (lambda (x)   (+ x 10)))
+                  (rsf! "foo" 2 (lambda (x y) (+ x y)))
+                  (rsf! "foo" -1 *)
+                  (exec (sql db "select foo(1), foo(2,3), foo(4,5,6);"))))
+
      (test-error "raise error in function"
                  (begin (rsf! "foo" 1 (lambda (x) (error 'foo x)))
                         (exec (sql db "select foo(0);"))))
+
      
      )))
  )
