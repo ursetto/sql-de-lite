@@ -76,7 +76,7 @@ int sqlite3_create_function_v2(
   void(*xDestroy)(void*)
 );
 
-void sqlite3_result_blob(sqlite3_context*, const void*, int, void(*)(void*));
+void sqlite3_result_blob(sqlite3_context*, ___blob /* const void* */, int, void(*)(void*));
 void sqlite3_result_double(sqlite3_context*, double);
 void sqlite3_result_error(sqlite3_context*, const char*, int);
 void sqlite3_result_error16(sqlite3_context*, const void*, int);

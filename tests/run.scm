@@ -802,6 +802,23 @@
            '("bar baz quux")
            (begin (rsf! "foo" 1 (lambda (x) (string-append x " quux")))
                   (exec (sql db "select foo('bar baz');"))))
+
+     (test "pass null blob, receive null blob"
+           (list (make-blob 0))
+           (begin (rsf! "foo" 1 (lambda (x)
+                                  (unless (= 0 (blob-size x)) (error 'foo "expected null blob"))
+                                  (make-blob 0)))
+                  (exec (sql db "select foo(x'')"))))
+
+     (test "pass blob, receive blob"
+           (list (string->blob "abc\x00def\x00ghi"))
+           (begin (rsf! "foo" 1 (lambda (x)
+                                  (string->blob (string-append (blob->string x) "ghi"))))
+                  (exec (sql db "select foo(x'6162630064656600')"))))
+
+     (test-error "raise error in function"
+                 (begin (rsf! "foo" 1 (lambda (x) (error 'foo x)))
+                        (exec (sql db "select foo(0);"))))
      
      )))
  )

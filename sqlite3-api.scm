@@ -267,7 +267,7 @@
         void
         "sqlite3_result_blob"
         (c-pointer "sqlite3_context")
-        (c-pointer void)
+        blob
         integer
         (function void ((c-pointer void))))))
   (begin
