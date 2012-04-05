@@ -1016,7 +1016,7 @@ int busy_notification_handler(void *ctx, int times) {
 ;; (define free-gc-root
 ;;   (foreign-lambda void CHICKEN_delete_gc_root c-pointer))
 
-(define (%callback-result ctx x)
+(define-inline (%callback-result ctx x)
   (cond ((string? x)
          (sqlite3_result_text ctx x (string-length x) ;; Possible FIXME: Unnecessary extra copy of x
                               destructor-type/transient))
@@ -1033,7 +1033,38 @@ int busy_notification_handler(void *ctx, int times) {
         (else
          (error 'callback "invalid result type" x))))
 
-(define-external (scalar_callback (c-pointer ctx) (int n) (c-pointer args))
+(define %copy! (foreign-lambda c-pointer "C_memcpy"
+                               scheme-pointer c-pointer int))
+(define %value-at (foreign-lambda* c-pointer (((c-pointer "sqlite3_value*") vals)
+                                              (int i))
+                    "return(vals[i]);"))
+
+(define-inline %value-data
+  (lambda (vals i)
+    (let* ((v (%value-at vals i))
+           (t (sqlite3_value_type v)))
+      ;; INTEGER type may reach 64 bits; return at least 53 significant.      
+      (cond ((= t type/integer) (sqlite3_value_int64 v))
+            ((= t type/float)   (sqlite3_value_double v))
+            ;; Just as in column-data we choose to disallow embedded NULs in text columns;
+            ;; the database allows it but it may cause problems with internal functions.
+            ;; This behavior could be changed if it becomes a problem.
+            ((= t type/text)    (sqlite3_value_text v))
+            ((= t type/null)    '())
+            ((= t type/blob)
+             (let ((b (make-blob (sqlite3_value_bytes v))))
+               (%copy! b (sqlite3_value_blob v) (blob-size b))
+               b))
+            (else
+             (error 'value-data "illegal type at index" i)))))) ; assertion
+
+(define (parameter-data vals n)
+  (let loop ((i (fx- n 1)) (L '()))
+    (if (< i 0)
+        L
+        (loop (fx- i 1) (cons (%value-data vals i) L)))))
+
+(define-external (scalar_callback (c-pointer ctx) (int nvals) (c-pointer vals))
   void
   (foreign-code "C_disable_interrupts();")
   (handle-exceptions exn
@@ -1047,7 +1078,7 @@ int busy_notification_handler(void *ctx, int times) {
                             -1)
     (let ((data (gc-root-ref (sqlite3_user_data ctx))))
       (let ((proc (cadr data)))
-        (%callback-result ctx (proc 47)))))
+        (%callback-result ctx (apply proc (parameter-data vals nvals))))))
   (foreign-code "C_enable_interrupts();"))
 
 (define (register-scalar-function! db name nargs proc)
@@ -1068,7 +1099,7 @@ int busy_notification_handler(void *ctx, int times) {
 
   )  ; module
 
-;; Copyright (c) 2009 Jim Ursetto.  All rights reserved.
+;; Copyright (c) 2009-2012 Jim Ursetto.  All rights reserved.
 ;; 
 ;; Redistribution and use in source and binary forms, with or without
 ;; modification, are permitted provided that the following conditions are met:

@@ -383,6 +383,78 @@
         (c-pointer "sqlite3_context")
         integer)))
   (begin
+    (define sqlite3_value_blob
+      (foreign-lambda
+        (c-pointer (const void))
+        "sqlite3_value_blob"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_bytes
+      (foreign-lambda
+        integer
+        "sqlite3_value_bytes"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_bytes16
+      (foreign-lambda
+        integer
+        "sqlite3_value_bytes16"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_double
+      (foreign-lambda
+        double
+        "sqlite3_value_double"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_int
+      (foreign-lambda
+        integer
+        "sqlite3_value_int"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_int64
+      (foreign-lambda
+        integer64
+        "sqlite3_value_int64"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_text
+      (foreign-lambda
+        (const (c-pointer unsigned-char))
+        "sqlite3_value_text"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_text16
+      (foreign-lambda
+        (c-pointer (const void))
+        "sqlite3_value_text16"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_text16le
+      (foreign-lambda
+        (c-pointer (const void))
+        "sqlite3_value_text16le"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_text16be
+      (foreign-lambda
+        (c-pointer (const void))
+        "sqlite3_value_text16be"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_type
+      (foreign-lambda
+        integer
+        "sqlite3_value_type"
+        (c-pointer "sqlite3_value"))))
+  (begin
+    (define sqlite3_value_numeric_type
+      (foreign-lambda
+        integer
+        "sqlite3_value_numeric_type"
+        (c-pointer "sqlite3_value"))))
+  (begin
     (define sqlite3_user_data
       (foreign-lambda
         (c-pointer void)
