@@ -826,9 +826,9 @@
                   (exec (sql db "select foo(1,2,3,4);"))))
 
      (test "overload argument count"
-           '(11 5 120)
+           '(11 -1 120)
            (begin (rsf! "foo" 1 (lambda (x)   (+ x 10)))
-                  (rsf! "foo" 2 (lambda (x y) (+ x y)))
+                  (rsf! "foo" 2 (lambda (x y) (- x y)))
                   (rsf! "foo" -1 *)
                   (exec (sql db "select foo(1), foo(2,3), foo(4,5,6);"))))
 
