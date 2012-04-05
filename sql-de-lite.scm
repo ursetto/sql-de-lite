@@ -1070,7 +1070,7 @@ int busy_notification_handler(void *ctx, int times) {
 
 (define-external (scalar_callback (c-pointer ctx) (int nvals) (c-pointer vals))
   void
-  (foreign-code "C_disable_interrupts();")
+  (##core#inline "C_disable_interrupts")
   (handle-exceptions exn
       (sqlite3_result_error ctx ;; (or ((condition-property-accessor 'exn 'message) exn)
                                 ;;     "Unknown Scheme error")
@@ -1083,7 +1083,7 @@ int busy_notification_handler(void *ctx, int times) {
     (let ((data (gc-root-ref (sqlite3_user_data ctx))))
       (let ((proc (scalar-data-proc data)))
         (%callback-result ctx (apply proc (parameter-data vals nvals))))))
-  (foreign-code "C_enable_interrupts();"))
+  (##core#inline "C_enable_interrupts"))
 
 (define (register-scalar-function! db name nargs proc)
   (cond ((not proc)
