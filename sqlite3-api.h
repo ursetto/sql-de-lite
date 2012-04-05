@@ -107,3 +107,4 @@ int sqlite3_value_type(sqlite3_value*);
 int sqlite3_value_numeric_type(sqlite3_value*);
 
 void *sqlite3_user_data(sqlite3_context*);
+void *sqlite3_aggregate_context(sqlite3_context*, int nBytes);

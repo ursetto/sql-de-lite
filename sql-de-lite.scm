@@ -66,6 +66,7 @@ int busy_notification_handler(void *ctx, int times) {
 
   ;; user-defined functions
   register-scalar-function!
+  register-aggregate-function!  
   )
 
 (import scheme
@@ -1066,6 +1067,11 @@ int busy_notification_handler(void *ctx, int times) {
         L
         (loop (fx- i 1) (cons (%value-data vals i) L)))))
 
+;;;; Scalars
+
+;; WARNING: C_disable_interrupts is run AFTER 1 C_check_for_interrupt already occurs,
+;; upon entry.
+
 (define-record scalar-data db name proc)
 
 (define-external (scalar_callback (c-pointer ctx) (int nvals) (c-pointer vals))
@@ -1103,9 +1109,66 @@ int busy_notification_handler(void *ctx, int times) {
                                        #f
                                        (foreign-value "CHICKEN_delete_gc_root" c-pointer))))))
 
-#|
+;;;; Aggregates
+
 (define-record aggregate-data db name pstep pfinal seed)
-(define (register-aggregate-function! db name nargs pstep #!optional (pfinal identity))
+
+(define-external (aggregate_step_callback (c-pointer ctx) (int nvals) (c-pointer vals))
+  void
+  (##core#inline "C_disable_interrupts")
+  (handle-exceptions exn
+      (sqlite3_result_error ctx
+                            ;; Recommended to include exn location and objects, but may be dangerous.  FIXME.
+                            (sprintf "(~a) ~a: ~s"
+                                     ((condition-property-accessor 'exn 'location) exn)
+                                     ((condition-property-accessor 'exn 'message) exn)
+                                     ((condition-property-accessor 'exn 'arguments) exn))
+                            -1)
+    (let ((data (gc-root-ref (sqlite3_user_data ctx))))
+      (let ((seed-box 
+             ((foreign-lambda* scheme-object ((c-pointer ctx) (scheme-object v))
+                "void **p = (void **)sqlite3_aggregate_context(ctx, sizeof(void *));"
+                "if (*p == 0) { *p = CHICKEN_new_gc_root(); CHICKEN_gc_root_set(*p, v); return(v); }"
+                "else { return(CHICKEN_gc_root_ref(*p)); }")
+              ;; vector may not even be used, but callbacks are extremely slow anyway.
+              ;; we could alloc in C instead.  pair better?
+              ctx (vector (aggregate-data-seed data)))))
+        (let ((new-seed
+               (apply (aggregate-data-pstep data)
+                      (vector-ref seed-box 0)
+                      (parameter-data vals nvals))))
+          (vector-set! seed-box 0 new-seed)))))
+  (##core#inline "C_enable_interrupts"))
+
+(define-external (aggregate_final_callback (c-pointer ctx))
+  void
+  (##core#inline "C_disable_interrupts")
+  (handle-exceptions exn
+      (sqlite3_result_error ctx
+                            ;; Recommended to include exn location and objects, but may be dangerous.  FIXME.
+                            (sprintf "(~a) ~a: ~s"
+                                     ((condition-property-accessor 'exn 'location) exn)
+                                     ((condition-property-accessor 'exn 'message) exn)
+                                     ((condition-property-accessor 'exn 'arguments) exn))
+                            -1)
+    (let ((data (gc-root-ref (sqlite3_user_data ctx))))
+      (let ((seed-box
+             ((foreign-lambda* scheme-object ((c-pointer ctx))
+                "void **p = (void **)sqlite3_aggregate_context(ctx, sizeof(void *));"
+                "C_word r;"
+                "if (*p == 0) return(C_SCHEME_FALSE);"
+                "r = CHICKEN_gc_root_ref(*p);"
+                "CHICKEN_delete_gc_root(*p);" ;; This is probably illegal
+                "return(r);")
+              ctx)))
+        (let ((pfinal (aggregate-data-pfinal data))
+              (seed (if seed-box
+                        (vector-ref seed-box 0)
+                        (aggregate-data-seed data))))
+          (%callback-result ctx (pfinal seed))))))
+  (##core#inline "C_enable_interrupts"))
+
+(define (register-aggregate-function! db name nargs seed pstep #!optional (pfinal (lambda (x) x)))
   (cond ((not pstep)
          (unregister-function! db name nargs))
         (else
@@ -1123,7 +1186,6 @@ int busy_notification_handler(void *ctx, int times) {
                                        (foreign-value "aggregate_step_callback" c-pointer)
                                        (foreign-value "aggregate_final_callback" c-pointer)
                                        (foreign-value "CHICKEN_delete_gc_root" c-pointer))))))
-|#
 
 (define (unregister-function! db name nargs)
   (sqlite3_create_function_v2 (nonnull-db-ptr db)
