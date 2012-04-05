@@ -845,12 +845,54 @@
                            (exec (sql db "select foo(1);")))
                          (exec (sql db "select foo(2,3);"))))))
 
+     (test "sum multiple columns"
+           '((6) (15) (24))
+           (begin (rsf! "summa" -1 +)
+                  (query fetch-rows (sql db "select summa(a,b,c) from (select 1 as a, 2 as b, 3 as c union select 4 as a, 5 as b,6 as c union select 7 as a, 8 as b, 9 as c);"))))
+
+
      (test-error "raise error in function"
                  (begin (rsf! "foo" 1 (lambda (x) (error 'foo x)))
                         (exec (sql db "select foo(0);"))))
 
      
      )))
+
+(test-group
+  "aggregate functions"
+  (call-with-database
+   'memory
+   (lambda (db)
+     (define (raf! name nargs seed pstep #!optional (pfinal (lambda (x) x)))
+       (register-aggregate-function! db name nargs seed pstep pfinal))
+     ;; type tests.  this also tests that overrides work (and don't crash immediately, at least)
+     (test "sum one column"
+           '(6)
+           (begin (raf! "summa" 1 0 (lambda (s x) (+ s x)))
+                  (exec (sql db "select summa(a) from (select 1 as a union select 2 as a union select 3 as a);"))))
+     (test "sum multiple columns"
+           '((45))
+           (begin (raf! "summa" -1 0 +)
+                  (query fetch-rows (sql db "select summa(a,b,c) from (select 1 as a, 2 as b, 3 as c union select 4 as a, 5 as b,6 as c union select 7 as a, 8 as b, 9 as c);"))))
+
+     ;; I'd like to test that multiple instances of an aggregate function can run simultaneously,
+     ;; but am not sure how.
+
+     (test-error "raise error in step function"
+                 (begin (raf! "foo" 1 0
+                              (lambda (s x) (error 'foo x))
+                              (lambda (s) s))
+                        (exec (sql db "select foo(5);"))))
+
+     (test-error "raise error in final function"
+                 (begin (raf! "foo" 1 0
+                              (lambda (s x) (+ s x))
+                              (lambda (s) (error 'foo s)))
+                        (exec (sql db "select foo(5);"))))
+
+
+     )))
+
  )
 
 (test-group

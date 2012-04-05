@@ -1168,6 +1168,7 @@ int busy_notification_handler(void *ctx, int times) {
           (%callback-result ctx (pfinal seed))))))
   (##core#inline "C_enable_interrupts"))
 
+;; unregistering this is ugly, as we have to pass useless seed
 (define (register-aggregate-function! db name nargs seed pstep #!optional (pfinal (lambda (x) x)))
   (cond ((not pstep)
          (unregister-function! db name nargs))
