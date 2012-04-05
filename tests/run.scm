@@ -832,6 +832,19 @@
                   (rsf! "foo" -1 *)
                   (exec (sql db "select foo(1), foo(2,3), foo(4,5,6);"))))
 
+     (test "unregister overloaded function"        ;; Also tests unregister in general
+           '((11)
+             "wrong number of arguments to function foo()"  ;; ensure this is arity error (i.e. unregister worked)
+             (-1))
+           (begin (rsf! "foo" 1 (lambda (x) (+ x 10)))
+                  (rsf! "foo" 2 (lambda (x y) (- x y)))
+                  (let ((a (exec (sql db "select foo(1);"))))
+                   (rsf! "foo" 1 #f)
+                   (list a
+                         (handle-exceptions exn (sqlite-exception-message exn)
+                           (exec (sql db "select foo(1);")))
+                         (exec (sql db "select foo(2,3);"))))))
+
      (test-error "raise error in function"
                  (begin (rsf! "foo" 1 (lambda (x) (error 'foo x)))
                         (exec (sql db "select foo(0);"))))

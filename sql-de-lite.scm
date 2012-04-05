@@ -1084,19 +1084,28 @@ int busy_notification_handler(void *ctx, int times) {
   (foreign-code "C_enable_interrupts();"))
 
 (define (register-scalar-function! db name nargs proc)
-  (let ((name name)  ; ->string ?
-        (data (make-gc-root (list db proc name))))
-    (sqlite3_create_function_v2 (nonnull-db-ptr db)
-                                name
-                                nargs
-                                (foreign-value "SQLITE_UTF8" int)
-                                data
-                                (foreign-value "scalar_callback" c-pointer)
-                                #f
-                                #f
-                                (foreign-value "CHICKEN_delete_gc_root" c-pointer))))
+  (cond ((not proc)
+         (unregister-function! db name nargs))
+        (else
+         (##sys#check-closure proc)
+         (let ((name name)              ; ->string ?
+               (data (make-gc-root (list db proc name))))
+           (sqlite3_create_function_v2 (nonnull-db-ptr db)
+                                       name
+                                       nargs
+                                       (foreign-value "SQLITE_UTF8" int)
+                                       data
+                                       (foreign-value "scalar_callback" c-pointer)
+                                       #f
+                                       #f
+                                       (foreign-value "CHICKEN_delete_gc_root" c-pointer))))))
 
-
+(define (unregister-function! db name nargs)
+  (sqlite3_create_function_v2 (nonnull-db-ptr db)
+                              name
+                              nargs
+                              (foreign-value "SQLITE_UTF8" int)
+                              #f #f #f #f #f))
 
 
   )  ; module
