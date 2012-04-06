@@ -1180,20 +1180,26 @@ int busy_notification_handler(void *ctx, int times) {
          (let* ((dbptr (nonnull-db-ptr db))   ;; check type now before creating gc root
                 (data (make-gc-root (make-aggregate-data
                                      db name pstep pfinal seed))))  ;; Note that DB and NAME are not currently used.
-           (sqlite3_create_function_v2 dbptr name nargs
-                                       (foreign-value "SQLITE_UTF8" int)
-                                       data
-                                       #f
-                                       (foreign-value "aggregate_step_callback" c-pointer)
-                                       (foreign-value "aggregate_final_callback" c-pointer)
-                                       (foreign-value "CHICKEN_delete_gc_root" c-pointer))))))
+           (let ((rv (sqlite3_create_function_v2 dbptr name nargs
+                                                 (foreign-value "SQLITE_UTF8" int)
+                                                 data
+                                                 #f
+                                                 (foreign-value "aggregate_step_callback" c-pointer)
+                                                 (foreign-value "aggregate_final_callback" c-pointer)
+                                                 (foreign-value "CHICKEN_delete_gc_root" c-pointer))))
+             (if (= status/ok rv)
+                 (void)
+                 (database-error db rv 'register-aggregate-function!)))))))
 
 (define (unregister-function! db name nargs)
-  (sqlite3_create_function_v2 (nonnull-db-ptr db)
-                              name
-                              nargs
-                              (foreign-value "SQLITE_UTF8" int)
-                              #f #f #f #f #f))
+  (let ((rv (sqlite3_create_function_v2 (nonnull-db-ptr db)
+                                        name
+                                        nargs
+                                        (foreign-value "SQLITE_UTF8" int)
+                                        #f #f #f #f #f)))
+    (if (= status/ok rv)
+        (void)
+        (database-error db rv 'unregister-function!))))
 
 
   )  ; module

@@ -893,6 +893,15 @@
                               (lambda (s) (error 'foo s)))
                         (exec (sql db "select foo(5);"))))
 
+     (test "active statements prevent unregister"
+           "unable to delete/modify user-function due to active statements"
+           (let ((s (prepare db "select 1 union select 2;")))
+             (step s)
+             (raf! "bar" 1 0 +)
+             (handle-exceptions exn (begin0 (sqlite-exception-message exn)
+                                      (reset s))   ;; fixme: maybe really unregister bar afterward
+               (raf! "bar" 1 0 #f))))
+     
 
      )))
 
