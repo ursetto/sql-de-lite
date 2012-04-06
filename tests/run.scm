@@ -901,9 +901,28 @@
              (handle-exceptions exn (begin0 (sqlite-exception-message exn)
                                       (reset s))   ;; fixme: maybe really unregister bar afterward
                (raf! "bar" 1 0 #f))))
-     
 
-     )))
+     (test "overload and unregister"
+           '((6)      ;; 1arg
+             (90)     ;; 2arg
+             (11)     ;; 1arg modified
+             "wrong number of arguments to function quux()"     ;; 1arg deleted
+             (90))    ;; 2arg again
+           (begin (raf! "quux" 1 0   (lambda (s x) (+ s x)))      ;; register fxn with 1 arg
+                  (raf! "quux" 2 100 (lambda (s x y) (- s x y)))  ;; register fxn with 2 args
+                  (let ((s (sql db "select quux(a) from (select 1 as a union select 2 as a union select 3 as a)"))
+                        (s2 (sql db "select quux(a,b) from (select 1 as a,2 as b union select 3 as a,4 as b);")))
+                    (let ((a (exec s))
+                          (b (exec s2)))
+                      (raf! "quux" 1 2 (lambda (s x) (+ s x 1))) ;; override existing 1 arg, changing seed and fxn
+                      (let ((c (exec s)))
+                        (raf! "quux" 1 0 #f) ;; delete existing 1 arg
+                        (list a
+                              b
+                              c
+                              (handle-exceptions exn (sqlite-exception-message exn)
+                                (exec s))
+                              (exec s2))))))))))
 
  )
 
