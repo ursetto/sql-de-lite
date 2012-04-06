@@ -922,7 +922,36 @@
                               c
                               (handle-exceptions exn (sqlite-exception-message exn)
                                 (exec s))
-                              (exec s2))))))))))
+                              (exec s2)))))))
+
+     (test "varargs overload and unregister"
+           '((88)   ;1arg
+             (75)   ;3arg + 30
+             (-630) ;3arg * -1
+             "wrong number of arguments to function mumble()"  ;3arg deleted
+             (88)   ;1arg again
+             "no such function: mumble"                        ;1arg deleted
+             )
+           (let ((s (sql db "select mumble(a) from (select 1 as a, 2 as b, 3 as c union select 4 as a, 5 as b,6 as c union select 7 as a, 8 as b, 9 as c);"))
+                 (s3 (sql db "select mumble(a,b,c) from (select 1 as a, 2 as b, 3 as c union select 4 as a, 5 as b,6 as c union select 7 as a, 8 as b, 9 as c);")))
+             (raf! "mumble" 1 100 -)
+             (raf! "mumble" -1 30 +)
+             (let* ((a (query fetch-rows s))
+                    (b (query fetch-rows s3)))
+               (raf! "mumble" -1 -1 *)
+               (let ((c (query fetch-rows s3)))
+                 (raf! "mumble" -1 0 #f)
+                 (let ((d (handle-exceptions exn (sqlite-exception-message exn)
+                           (query fetch-rows s3))))
+                   (let ((e (query fetch-rows s)))
+                     (raf! "mumble" 1 0 #f)
+                     (let ((f (handle-exceptions exn (sqlite-exception-message exn)
+                           (query fetch-rows s3))))
+                       (list a b c d e f))))))))
+
+
+
+     )))
 
  )
 
