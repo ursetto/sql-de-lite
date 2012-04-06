@@ -670,7 +670,7 @@
      (tval ":foo,?"    '(16 ()) 15 foo: 16)
      (tval "?,:foo"    '(17 18) 17 foo: 18)
 
-     (terr ":foo,?1"            foo: 100)      ;; error: no such param
+     (terr ":foo,?1"            foo: 99)       ;; error: no such param
      (tval ":foo,?1" '(100 100) 100)
      (terr "?1,:foo"            101)           ;; arity error
      (terr "?1,:foo"            foo: 102)      ;; arity error
