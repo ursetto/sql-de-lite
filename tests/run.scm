@@ -895,12 +895,21 @@
 
      (test "active statements prevent unregister"
            "unable to delete/modify user-function due to active statements"
-           (let ((s (prepare db "select 1 union select 2;")))
+           ;; Note that we deliberately use a transient statement because
+           ;; cached statements are currently flushed (finalized) when registering
+           ;; functions, as a workaround for SQLite bug.  (In this case stepping the
+           ;; cached statement again would fail.)
+           (let ((s (prepare-transient db "select 1 union select 2 union select 3;")))
              (step s)
              (raf! "bar" 1 0 +)
-             (handle-exceptions exn (begin0 (sqlite-exception-message exn)
-                                      (reset s))   ;; fixme: maybe really unregister bar afterward
-               (raf! "bar" 1 0 #f))))
+             (begin0
+                 (handle-exceptions exn (begin0 (sqlite-exception-message exn)
+                                          (reset s)) ;; fixme: maybe really unregister bar afterward
+                   (raf! "bar" 1 0 #f)
+                   ;; assertion: catch erroneous case when we finalized an active statement out from
+                   ;; under us, in case we are using cached statements.  can not happen currently
+                   (step s))
+               (finalize s))))
 
      (test "overload and unregister"
            '((6)      ;; 1arg
@@ -925,11 +934,11 @@
                               (exec s2)))))))
 
      (test "varargs overload and unregister"
-           '((88)   ;1arg
-             (75)   ;3arg + 30
-             (-630) ;3arg * -1
+           '(((88))                     ;1arg
+             ((75))                     ;3arg + 30
+             ((-362880))                ;3arg * -1
              "wrong number of arguments to function mumble()"  ;3arg deleted
-             (88)   ;1arg again
+             ((88))                     ;1arg again
              "no such function: mumble"                        ;1arg deleted
              )
            (let ((s (sql db "select mumble(a) from (select 1 as a, 2 as b, 3 as c union select 4 as a, 5 as b,6 as c union select 7 as a, 8 as b, 9 as c);"))

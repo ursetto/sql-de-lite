@@ -1092,6 +1092,7 @@ int busy_notification_handler(void *ctx, int times) {
   (##core#inline "C_enable_interrupts"))
 
 (define (register-scalar-function! db name nargs proc)
+  (flush-cache! db)  
   (cond ((not proc)
          (unregister-function! db name nargs))
         (else
@@ -1170,6 +1171,9 @@ int busy_notification_handler(void *ctx, int times) {
 
 ;; unregistering this is ugly, as we have to pass useless seed
 (define (register-aggregate-function! db name nargs seed pstep #!optional (pfinal (lambda (x) x)))
+  ;; Flush cache unconditionally because existing statements may not be reprepared automatically
+  ;; when nargs==-1, due to SQLite bug.  This ensures idle cached statements see the update.
+  (flush-cache! db)   ;; Maybe we can limit this to nargs==-1 case?
   (cond ((not pstep)
          (unregister-function! db name nargs))
         (else
