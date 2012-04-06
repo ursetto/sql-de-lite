@@ -73,4 +73,19 @@ All steps safe
  Step 1000000 times, user callback, callback registered
  5.637s CPU time, 1.088s GC time (major), 4000000 mutations, 5000/1995000 GCs (major/minor)
 
+Steps unsafe until any callback registered, then all steps safe (current implementation)
+
+ Creating table
+ 5.118s CPU time, 0.005s GC time (major), 44804 mutations, 29/5518 GCs (major/minor)
+ Step 1000000 times, no callbacks registered
+ 0.275s CPU time, 6400 mutations, 5/1308 GCs (major/minor)
+ Step 1000000 times, built-in function, no callbacks registered
+ 0.446s CPU time, 0.002s GC time (major), 6400 mutations, 5/1308 GCs (major/minor)
+ Step 1000000 times, no callback, callback registered
+ 2.612s CPU time, 0.984s GC time (major), 1008000 mutations, 4588/995412 GCs (major/minor)
+ Step 1000000 times, built-in function, callback registered
+ 2.846s CPU time, 0.989s GC time (major), 1008000 mutations, 4589/995411 GCs (major/minor)
+ Step 1000000 times, user callback, callback registered
+ 5.689s CPU time, 1.13s GC time (major), 4000000 mutations, 5154/1994846 GCs (major/minor)
+
 |#

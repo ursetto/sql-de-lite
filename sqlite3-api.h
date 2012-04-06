@@ -23,7 +23,8 @@ int sqlite3_prepare_v2(
   const char **pzTail     /* OUT: Pointer to unused portion of zSql */
 );
 sqlite3_stmt *sqlite3_next_stmt(sqlite3 *pDb, sqlite3_stmt *pStmt);
-___safe int sqlite3_step(sqlite3_stmt *);
+int sqlite3_step(sqlite3_stmt *);
+___safe int sqlite3_step_safe(sqlite3_stmt *);
 int sqlite3_reset(sqlite3_stmt *pStmt);
 int sqlite3_finalize(sqlite3_stmt *pStmt);
 int sqlite3_changes(sqlite3*);

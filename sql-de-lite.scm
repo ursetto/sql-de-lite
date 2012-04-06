@@ -11,6 +11,7 @@ int busy_notification_handler(void *ctx, int times) {
    *(C_word*)(C_data_pointer(ctx)) = C_SCHEME_TRUE;
    return 0;
 }
+#define sqlite3_step_safe sqlite3_step
 <#
 
 ;;; Module definition
@@ -151,12 +152,13 @@ int busy_notification_handler(void *ctx, int times) {
 ;;; Records
 
 (define-record-type sqlite-database
-  (make-db ptr filename busy-handler invoked-busy-handler? statement-cache)
+  (make-db ptr filename busy-handler invoked-busy-handler? safe-step? statement-cache)
   db?
   (ptr db-ptr set-db-ptr!)
   (filename db-filename)
   (busy-handler db-busy-handler set-db-busy-handler!)
   (invoked-busy-handler? db-invoked-busy-handler?)
+  (safe-step? db-safe-step? set-db-safe-step!)  ;; global flag indicating step needs safe-lambda
   (statement-cache db-statement-cache))
 (define-record-printer (sqlite-database db port)
   (fprintf port "#<sqlite-database ~A on ~S>"
@@ -224,6 +226,8 @@ int busy_notification_handler(void *ctx, int times) {
   (set-handle-run-state! (statement-handle s) 1))
 (define (set-statement-done! s)
   (set-handle-run-state! (statement-handle s) 2))
+(define (statement-safe-step? s)
+  (db-safe-step? (statement-db s)))      ;; just check the global safe step
 
 (define-inline (nonnull-statement-ptr stmt)
   ;; All references to statement ptr implicitly check for valid db.
@@ -482,10 +486,13 @@ int busy_notification_handler(void *ctx, int times) {
 ;; any data.  I assume that is an undetected MISUSE condition.
 ;; NB It should not be necessary to reset between calls to busy handler.
 (define (step stmt)
-  (let ((db (statement-db stmt)))
+  (let ((db (statement-db stmt))
+        (step/safe (if (statement-safe-step? stmt)
+                       sqlite3_step_safe
+                       sqlite3_step)))
     (let retry ((times 0))
       (reset-busy! db)
-      (let ((rv (sqlite3_step (nonnull-statement-ptr stmt))))
+      (let ((rv (step/safe (nonnull-statement-ptr stmt))))
         (cond ((= rv status/row)
                (set-statement-running! stmt)
                'row)
@@ -791,12 +798,13 @@ int busy_notification_handler(void *ctx, int times) {
                      filename
                      #f                       ; busy-handler
                      (object-evict (vector #f)) ; invoked-busy?
+                     #f                       ; safe-step?
                      (make-lru-cache (prepared-cache-size)
                                      string=?
                                      (lambda (sql stmt)
                                        (finalize-transient stmt))))
             (if db-ptr
-                (database-error (make-db db-ptr filename #f #f #f) rv
+                (database-error (make-db db-ptr filename #f #f #f #f) rv
                                 'open-database filename)
                 (error 'open-database "internal error: out of memory")))))))
 
@@ -1092,7 +1100,8 @@ int busy_notification_handler(void *ctx, int times) {
   (##core#inline "C_enable_interrupts"))
 
 (define (register-scalar-function! db name nargs proc)
-  (flush-cache! db)  
+  (flush-cache! db)
+  (set-db-safe-step! db #t)
   (cond ((not proc)
          (unregister-function! db name nargs))
         (else
@@ -1174,6 +1183,7 @@ int busy_notification_handler(void *ctx, int times) {
   ;; Flush cache unconditionally because existing statements may not be reprepared automatically
   ;; when nargs==-1, due to SQLite bug.  This ensures idle cached statements see the update.
   (flush-cache! db)   ;; Maybe we can limit this to nargs==-1 case?
+  (set-db-safe-step! db #t)
   (cond ((not pstep)
          (unregister-function! db name nargs))
         (else

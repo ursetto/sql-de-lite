@@ -58,7 +58,13 @@
         (c-pointer "sqlite3_stmt"))))
   (begin
     (define sqlite3_step
-      (foreign-safe-lambda integer "sqlite3_step" (c-pointer "sqlite3_stmt"))))
+      (foreign-lambda integer "sqlite3_step" (c-pointer "sqlite3_stmt"))))
+  (begin
+    (define sqlite3_step_safe
+      (foreign-safe-lambda
+        integer
+        "sqlite3_step_safe"
+        (c-pointer "sqlite3_stmt"))))
   (begin
     (define sqlite3_reset
       (foreign-lambda integer "sqlite3_reset" (c-pointer "sqlite3_stmt"))))
@@ -459,6 +465,13 @@
       (foreign-lambda
         (c-pointer void)
         "sqlite3_user_data"
-        (c-pointer "sqlite3_context")))))
+        (c-pointer "sqlite3_context"))))
+  (begin
+    (define sqlite3_aggregate_context
+      (foreign-lambda
+        (c-pointer void)
+        "sqlite3_aggregate_context"
+        (c-pointer "sqlite3_context")
+        integer))))
 
 ;;; END OF FILE
