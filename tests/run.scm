@@ -869,7 +869,7 @@
    'memory
    (lambda (db)
      (define (raf! name nargs seed pstep #!optional (pfinal (lambda (x) x)))
-       (register-aggregate-function! db name nargs seed pstep pfinal))
+       (register-aggregate-function! db name nargs pstep seed pfinal))
      ;; type tests.  this also tests that overrides work (and don't crash immediately, at least)
      (test "sum one column"
            '(6)

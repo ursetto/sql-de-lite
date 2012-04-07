@@ -1178,8 +1178,7 @@ int busy_notification_handler(void *ctx, int times) {
           (%callback-result ctx (pfinal seed))))))
   (##core#inline "C_enable_interrupts"))
 
-;; unregistering this is ugly, as we have to pass useless seed
-(define (register-aggregate-function! db name nargs seed pstep #!optional (pfinal (lambda (x) x)))
+(define (register-aggregate-function! db name nargs pstep #!optional (seed 0) (pfinal (lambda (x) x)))
   ;; Flush cache unconditionally because existing statements may not be reprepared automatically
   ;; when nargs==-1, due to SQLite bug.  This ensures idle cached statements see the update.
   (flush-cache! db)   ;; Maybe we can limit this to nargs==-1 case?
