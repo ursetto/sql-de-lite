@@ -261,10 +261,19 @@
               (s2 (prepare-transient db "select 3 union select 4")))
           (let ((rv (list (fetch s1)
                           (fetch s2))))
-            (close-database db)
+            (close-database db)         ;; warning: database doesn't get closed here anymore
             (finalize s1)
             (finalize s2)
             rv))))
+
+(test-error "step after db closed raises exception"
+            (let ((db (open-database ":memory:")))
+              (let ((s1 (prepare-transient db "select 1;")))
+                (and (eqv? 'row (step s1))
+                     (eqv? 'done (step s1))
+                     (finalize s1)
+                     (close-database db)      ;; returns #f if statements still open
+                     (step s1)))))
 
 ;; This is not "good" behavior, but expected.
 (test "Open transient statements leave database open after call/db"

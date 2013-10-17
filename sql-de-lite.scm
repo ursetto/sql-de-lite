@@ -157,7 +157,7 @@ int busy_notification_handler(void *ctx, int times) {
   (ptr db-ptr set-db-ptr!)
   (filename db-filename)
   (busy-handler db-busy-handler set-db-busy-handler!)
-  (invoked-busy-handler? db-invoked-busy-handler?)
+  (invoked-busy-handler? db-invoked-busy-handler? set-db-invoked-busy-handler?!)
   (safe-step? db-safe-step? set-db-safe-step!)  ;; global flag indicating step needs safe-lambda
   (statement-cache db-statement-cache))
 (define-record-printer (sqlite-database db port)
@@ -399,33 +399,34 @@ int busy_notification_handler(void *ctx, int times) {
 (define (prepare-handle db sql)
   (let-location ((stmt (c-pointer "sqlite3_stmt")))
     (let retry ((times 0))
-      (reset-busy! db)
-      (let ((rv (sqlite3_prepare_v2 (nonnull-db-ptr db)
-                                    sql
-                                    (string-length sql)
-                                    (location stmt)
-                                    #f)))
-        (cond ((= rv status/ok)
-               (if stmt
-                   (let* ((nparam (sqlite3_bind_parameter_count stmt)))
-                     (make-handle stmt
-                                  #f ; names
-                                  nparam
-                                  #f 0)) ; cached? run-state
-                   ;; Not strictly an error, but to handle it properly we must
-                   ;; create a dummy statement and change all statement interfaces
-                   ;; to respect it; until then, we'll make it illegal.
-                   (database-error db rv 'prepare sql     ;; FIXME: This will show "not an error" error.
-                                   "attempted to prepare whitespace or comment SQL")))
-              ((= rv status/busy)
-               (let ((bh (db-busy-handler db)))
-                 (if (and bh
-                          (retry-busy? db)
-                          (bh db times))
-                     (retry (+ times 1))
-                     (database-error db rv 'prepare sql))))
-              (else
-               (database-error db rv 'prepare sql)))))))
+      (let ((dbptr (nonnull-db-ptr db)))
+        (reset-busy! db)
+        (let ((rv (sqlite3_prepare_v2 dbptr
+                                      sql
+                                      (string-length sql)
+                                      (location stmt)
+                                      #f)))
+          (cond ((= rv status/ok)
+                 (if stmt
+                     (let* ((nparam (sqlite3_bind_parameter_count stmt)))
+                       (make-handle stmt
+                                    #f  ; names
+                                    nparam
+                                    #f 0)) ; cached? run-state
+                     ;; Not strictly an error, but to handle it properly we must
+                     ;; create a dummy statement and change all statement interfaces
+                     ;; to respect it; until then, we'll make it illegal.
+                     (database-error db rv 'prepare sql ;; FIXME: This will show "not an error" error.
+                                     "attempted to prepare whitespace or comment SQL")))
+                ((= rv status/busy)
+                 (let ((bh (db-busy-handler db)))
+                   (if (and bh
+                            (retry-busy? db)
+                            (bh db times))
+                       (retry (+ times 1))
+                       (database-error db rv 'prepare sql))))
+                (else
+                 (database-error db rv 'prepare sql))))))))
 
 ;; Looks up a prepared statement in the statement cache.  If not
 ;; found, it prepares a statement and caches it.  If transient,
@@ -487,12 +488,13 @@ int busy_notification_handler(void *ctx, int times) {
 ;; NB It should not be necessary to reset between calls to busy handler.
 (define (step stmt)
   (let ((db (statement-db stmt))
+        (sptr (nonnull-statement-ptr stmt))
         (step/safe (if (statement-safe-step? stmt)
                        sqlite3_step_safe
                        sqlite3_step)))
     (let retry ((times 0))
       (reset-busy! db)
-      (let ((rv (step/safe (nonnull-statement-ptr stmt))))
+      (let ((rv (step/safe sptr)))
         (cond ((= rv status/row)
                (set-statement-running! stmt)
                'row)
@@ -824,6 +826,7 @@ int busy_notification_handler(void *ctx, int times) {
     (cond ((eqv? status/ok (sqlite3_close db-ptr))
            (set-db-ptr! db #f)
            (object-release (db-invoked-busy-handler? db))
+           (set-db-invoked-busy-handler?! db 'database-closed)
            #t)
           (else #f))))
 
@@ -974,15 +977,16 @@ int busy_notification_handler(void *ctx, int times) {
 (define (reset-busy! db)
   (vector-set! (db-invoked-busy-handler? db) 0 #f))
 (define (set-busy-handler! db proc)
-  (set-db-busy-handler! db proc)
-  (if proc
-      (sqlite3_busy_handler (nonnull-db-ptr db)
-                            (foreign-value "busy_notification_handler"
-                                           c-pointer)
-                            (object->pointer
-                             (db-invoked-busy-handler? db)))
-      (sqlite3_busy_handler (nonnull-db-ptr db) #f #f))
-  (void))
+  (let ((dbptr (nonnull-db-ptr db)))
+    (set-db-busy-handler! db proc)
+    (if proc
+        (sqlite3_busy_handler dbptr
+                              (foreign-value "busy_notification_handler"
+                                             c-pointer)
+                              (object->pointer
+                               (db-invoked-busy-handler? db)))
+        (sqlite3_busy_handler dbptr #f #f))
+    (void)))
 (define (thread-sleep!/ms ms)
   (thread-sleep! (/ ms 1000)))
 ;; (busy-timeout ms) returns a procedure suitable for use in
