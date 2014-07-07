@@ -786,14 +786,14 @@ int busy_notification_handler(void *ctx, int times) {
 (define (open-database filename)
   (let ((filename
          (if (string? filename)
-             (##sys#expand-home-path filename)
+             filename
              (case filename
                ((memory) ":memory:")
                ((temp temporary) "")
                (else (error 'open-database "unrecognized database type"
                             filename))))))
     (let-location ((db-ptr (c-pointer "sqlite3")))
-      (let* ((rv (sqlite3_open (##sys#expand-home-path filename)
+      (let* ((rv (sqlite3_open filename
                                (location db-ptr))))
         (if (eqv? rv status/ok)
             (make-db db-ptr
