@@ -7,7 +7,7 @@
 ;; Use CSC_OPTIONS="-I<incdir> -L<libdir>" chicken-install
 ;; if you want to look for an external SQLite3 library in a non-standard location.
 
-(define extension-version "0.6.3")
+(define extension-version "0.6.4")
 
 ;; Minimum SQLite version to accept when choosing whether to use external library.
 ;; There's also a minimum legal version that we can even use, but we just let the
@@ -76,7 +76,7 @@
 (define (install-library)
   (compile -s -O2 -d0 sql-de-lite.import.scm)
   (install-extension
-   'sql-de-lite 
+   'sql-de-lite
    `("sql-de-lite.so" "sql-de-lite.import.so")
    `((version ,extension-version))))
 

@@ -615,15 +615,12 @@
              (exec (sql db "select rowid, * from cache where rowid = ?;")
                    rowid))
        (test (conc "last-insert-rowid on int64 rowid (numbers ok) " rowid)
-             (exact->inexact rowid)
+             (cond-expand (64bit rowid) (else (exact->inexact rowid)))
              (last-insert-rowid db))
-       ;; The next test will fail on 64-bit because returned value is exact,
-       ;; so it's not valid.
-       #;
        (test (conc "retrieve row containing int64 rowid (numbers ok) " rowid)
-             `(,(exact->inexact rowid) "jimmy" "dunno")
+             `(,(cond-expand (64bit rowid) (else (exact->inexact rowid))) "jimmy" "dunno")
              (exec (sql db "select rowid, * from cache where rowid = ?;")
-                   (exact->inexact rowid)))))))
+                   rowid))))))
 
 (test-group
  "binding types"     ;; Perhaps "large integers" test could be folded in here.
