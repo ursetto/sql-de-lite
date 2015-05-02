@@ -5,3 +5,4 @@ syntax: glob
 *.swp
 *.import.scm
 .svn
+sqlite-amalgamation*
