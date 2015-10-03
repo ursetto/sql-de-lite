@@ -395,6 +395,19 @@
                  (s2 (prepare db sql)))
             #t))))
 
+(test "Identical running nested SQL statements are allowed"
+      ;; This requires either that we prepare a separate statement if a cached statement is running,
+      ;; or that statements are only cached while they are not running (better).
+      '(1 . 2)
+      (call-with-database
+       'memory
+       (lambda (db)
+         (query (lambda (s)
+                  (let* ((v (fetch-value s))
+                         (v2 (query fetch-value (sql db "select ?;") 2)))
+                    (cons v v2)))
+                (sql db "select ?;") 1))))
+
 (test "create / insert one row via execute-sql"
       1
       (call-with-database ":memory:"
