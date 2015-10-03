@@ -1075,4 +1075,6 @@
 ;;     ;; Statement should successfully be finalized in let-prepare
 ;;     (reset *s1*)))    ;; reset should fail with finalized statement error
 
+(include "stmt-repro.scm")
+
 (test-exit)
