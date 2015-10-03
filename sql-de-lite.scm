@@ -3,6 +3,10 @@
 ;; Copyright (c) 2009 Jim Ursetto.  All rights reserved.
 ;; BSD license at end of file.
 
+;; FIXME: May need to maintain a list of open prepared statements to ensure we can close the database
+;;        when query/exec is not used, since cache no longer covers this.  However, we could also just
+;;        consider this a user error.  Note this may be required to implement reset-running-queries!.
+
 ;;; Direct-to-C
 
 #>  #include <sqlite3.h> <#
@@ -187,13 +191,12 @@ int busy_notification_handler(void *ctx, int times) {
 ;; always embedded in a sqlite-statement.
 (define-record-type sqlite-statement-handle
   (make-handle ptr column-names
-               parameter-count cached? run-state)
+               parameter-count run-state)
   handle?
   (ptr handle-ptr set-handle-ptr!)
   (column-names handle-column-names set-handle-column-names!)
   (parameter-count handle-parameter-count)
   ;; cached? flag avoids a cache-ref to check existence.
-  (cached? handle-cached? set-handle-cached!)
   (run-state handle-run-state set-handle-run-state!))
 
 ;; Convenience accessors for guts of statement.  Should be inlined.
@@ -207,10 +210,6 @@ int busy_notification_handler(void *ctx, int times) {
   (set-handle-column-names! (statement-handle s) v))
 (define (statement-parameter-count s)
   (handle-parameter-count (statement-handle s)))
-(define (statement-cached? s)
-  (handle-cached? (statement-handle s)))
-(define (set-statement-cached! s b)
-  (set-handle-cached! (statement-handle s) b))
 (define (statement-run-state s)
   (handle-run-state (statement-handle s)))
 ;; use an int instead of symbol; this is internal, and avoids mutations
@@ -249,6 +248,8 @@ int busy_notification_handler(void *ctx, int times) {
 
 ;; Resurrects finalized statement s or, if still live, just resets it.
 ;; Returns s, which is also modified in place.
+;; NOTE: resetting a live statement could be considered an error, as it could
+;; cause an infinite loop in a nested query context.
 (define (resurrect s)                ; inline
   (cond ((finalized? s)
          (prepare! s))
@@ -271,21 +272,20 @@ int busy_notification_handler(void *ctx, int times) {
             (lambda () protected)))
        normal))))
 
-;; Resurrects s, binds args to s and performs a query*.  If the statement
-;; was not cached, also finalizes the statement.  This is the
-;; usual way to perform a query unless you need to bind arguments
+;; Resurrects s, binds args to s, performs a query*, and finalizes the statement.
+;; This is the usual way to perform a query unless you need to bind arguments
 ;; manually or need other manual control.
+;; Implementation note: we don't actually call query* here.
 (define (query proc s . args)
   (resurrect s)
-  (if (statement-cached? s)
-      ;; It's a no-op to call (finalize s) on a cached statement, but
-      ;; entirely unnecessary.
-      (and (apply bind-parameters s args)
-           (query* proc s))
-      (fast-unwind-protect*
-       (and (apply bind-parameters s args)
-            (query* proc s))
-       (finalize-transient s))))
+  (fast-unwind-protect*
+   (and (apply bind-parameters s args)
+        (proc s))
+   (finalize s)
+   ;; finalize-transient might throw an error here if status/abort is returned; this
+   ;; would be fatal with fast-unwind-protect*.  Perhaps raise-database-errors should be #f here.
+   (when (statement? s)
+     (finalize-transient s))))
 ;; Calls (proc s) and resets the statement immediately afterward, to
 ;; avoid locking the database.  If an exception occurs during proc,
 ;; the statement will still be reset.  Statement is NOT reset before
@@ -294,7 +294,7 @@ int busy_notification_handler(void *ctx, int times) {
 ;; as you don't attempt to continue.
 (define (query* proc s)
   ;; Warning: if you remove test for (statement? s) in fast-unwind-protect*
-  ;; abnormal exit, you must test it before entry like:
+  ;; abnormal exit, you must test it before entry (to avoid error in error handler) like:
   ;; (unless (statement? s)
   ;;   (error 'query* "not a statement" s))
   (fast-unwind-protect*
@@ -306,13 +306,11 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Resurrects s, binds args to s and performs an exec*.
 (define (exec s . args)
   (resurrect s)
-  (if (statement-cached? s)
-      (and (apply bind-parameters s args)
-           (exec* s))
-      (fast-unwind-protect*
-       (and (apply bind-parameters s args)
-            (exec* s))
-       (finalize-transient s))))
+  (fast-unwind-protect*
+   (and (apply bind-parameters s args)
+        (exec* s))
+   (finalize s)
+   (finalize-transient s)))
 
 ;; Executes statement s, returning the number of changes (if the
 ;; result set has no columns as in INSERT, DELETE) or the first row
@@ -412,7 +410,7 @@ int busy_notification_handler(void *ctx, int times) {
                        (make-handle stmt
                                     #f  ; names
                                     nparam
-                                    #f 0)) ; cached? run-state
+                                    0)) ; run-state
                      ;; Not strictly an error, but to handle it properly we must
                      ;; create a dummy statement and change all statement interfaces
                      ;; to respect it; until then, we'll make it illegal.
@@ -433,7 +431,6 @@ int busy_notification_handler(void *ctx, int times) {
 ;; the cache is ignored.  An exception is
 ;; thrown if a statement we pulled from cache is currently running
 ;; (we could just warn and reset, if this causes problems).
-;; Statements are also marked as cached, so FINALIZE is a no-op.
 ;; PREPARE! is internal; it expects a statement S which has already
 ;; been allocated, and mutates the statement handle.  Returns S on
 ;; success or throws an error on failure (or returns #f if errors are disabled).
@@ -441,29 +438,36 @@ int busy_notification_handler(void *ctx, int times) {
   (let* ((db  (statement-db s))
          (sql (statement-sql s))
          (c (db-statement-cache db)))
-    (define (get-handle)
-      (cond ((or (statement-transient? s)
-                 (= 0 (lru-cache-capacity c)))
-             (prepare-handle db sql))
-            (else
-             (cond ((lru-cache-ref c sql)
-                    => (lambda (s)
-                         (cond ((statement-running? s)
-                                (error 'prepare
-                                       "cached statement is currently executing" s))
-                               ((statement-done? s)
-                                (reset s)))
-                         (statement-handle s)))
-                   ((prepare-handle db sql)
-                    => (lambda (h)
-                         (when (> (lru-cache-capacity c) 0)
-                           (set-handle-cached! h #t)
-                           (lru-cache-set! c sql s)) ;; s's handle slot will later be mutated
-                         h))
-                   (else #f)))))
-    (and-let* ((h (get-handle)))
-      (set-statement-handle! s h)
-      s)))
+    (cond ((statement-transient? s) ; don't pull transient stmts from cache, even if matching SQL available
+           (set-statement-handle! s (prepare-handle db sql))
+           s)
+          ((lru-cache-ref c sql)
+           => (lambda (s)
+                (cond ((statement-running? s) ; FIXME: can't happen anymore; to delete
+                       (error 'prepare
+                              "cached statement is currently executing" s))
+                      ((statement-done? s) ; FIXME: can't happen anymore; to delete
+                       (reset s)))
+                (lru-cache-delete! c sql)
+                s))
+          ((prepare-handle db sql)
+           => (lambda (h)
+                (set-statement-handle! s h)
+                s))
+          (else #f)))) ; #f -> error in prepare-handle (when errors disabled).  could call database-error anyway
+
+;; Attempt to cache statement S.
+;; Caching a statement could fail when 1) statement is transient or 2) when matching SQL text already exists in the cache.
+;; Because the LRU cache can only hold statements with unique text, we can't cache more than one of them.  Also, the
+;; lru-cache-set! operation on an existing entry doesn't reorder the cache or fire the deleter (this is arguably a
+;; design error) so we check if the statement text exists in the cache first, which serves the double purpose if
+;; reordering it to MRU if so.
+(define (cache-statement! s)
+  (and (not (statement-transient? s))
+       (let* ((c (db-statement-cache (statement-db s)))
+              (sql (statement-sql s)))
+         (and (not (lru-cache-ref c sql))
+              (lru-cache-set! c sql s)))))
 
 (define (prepare db sqlst)
   (resurrect (sql db sqlst)))
@@ -518,16 +522,20 @@ int busy_notification_handler(void *ctx, int times) {
                (reset-unconditionally stmt)
                (database-error db rv 'step stmt)))))))
 
-;; Finalize a statement.  Finalizing a finalized statement or a
-;; cached statement is a no-op.  Finalizing a statement on a closed
-;; DB is also a no-op; it is explicitly checked for here [*],
-;; although normally the cache prevents this issue.  All statements
-;; are automatically finalized when the database is closed, and cached
+;; Finalize a statement.  If the statement is transient, finalize it
+;; immediately.  Otherwise, the statement is marked for caching, so
+;; reset it and add it to the LRU cache.  Finalizing a finalized
+;; statement is a no-op.  Finalizing a statement on a closed DB is
+;; also a no-op; it is explicitly checked for here [*].  All statements are
+;; automatically finalized when the database is closed, and cached
 ;; statements are finalized as they expire, so it is rarely necessary
 ;; to call this.
 (define (finalize stmt)
-  (or (statement-cached? stmt)
-      (finalize-transient stmt)))
+  (or (finalized? stmt)
+      (if (cache-statement! stmt)
+          (reset stmt)
+          (finalize-transient stmt))))
+
 ;; Finalize a statement now, regardless of its cached status.  The
 ;; statement is not removed from the cache.  Finalization is indicated
 ;; by #f in the statement-handle pointer slot.

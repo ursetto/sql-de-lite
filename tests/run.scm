@@ -408,13 +408,12 @@
                     (cons v v2)))
                 (sql db "select ?;") 1))))
 
-;; FIXME: add test for identical nested SQL queries using exact same statement -- this should work,
-;; but the first statement will be reset when it is accessed in the nest, due to resurrect called
-;; by query.
-
 ;; The below results in an infinite loop of (1) (3) (3) ... . The inner query will rebind the parameters to 3,4
-;; (which will thus be seen later by the outer loop), and then it resets the query on termination, so the outer
+;; (which will thus be seen later by the outer loop), and it also resets the query on termination, so the outer
 ;; loop starts over from the beginning (now 3).
+;; FIXME: We may need to make (resurrect) error out if the statement is running.  This would avoid the infinite loop
+;; (which is a programming error) and, since we will transition to a cache that does not hold running statements,
+;; is not needed there.
 #;
 (test "Identical (object-wise) running nested SQL statements are allowed; inner resets outer"
       '(1 . 2)
