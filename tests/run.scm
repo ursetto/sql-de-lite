@@ -395,7 +395,7 @@
                  (s2 (prepare db sql)))
             #t))))
 
-(test "Identical running nested SQL statements are allowed"
+(test "Identical (text-wise) running nested SQL statements are allowed"
       ;; This requires either that we prepare a separate statement if a cached statement is running,
       ;; or that statements are only cached while they are not running (better).
       '(1 . 2)
@@ -407,6 +407,26 @@
                          (v2 (query fetch-value (sql db "select ?;") 2)))
                     (cons v v2)))
                 (sql db "select ?;") 1))))
+
+;; FIXME: add test for identical nested SQL queries using exact same statement -- this should work,
+;; but the first statement will be reset when it is accessed in the nest, due to resurrect called
+;; by query.
+
+;; The below results in an infinite loop of (1) (3) (3) ... . The inner query will rebind the parameters to 3,4
+;; (which will thus be seen later by the outer loop), and then it resets the query on termination, so the outer
+;; loop starts over from the beginning (now 3).
+#;
+(test "Identical (object-wise) running nested SQL statements are allowed; inner resets outer"
+      '(1 . 2)
+      (call-with-database
+       'memory
+       (lambda (db)
+         (let ((s (sql db "select ? union select ?;")))
+           (query (map-rows (lambda (row)
+                              (print row)
+                              (append row
+                                      (query fetch-value s 3 4))))
+                  s 1 2)))))
 
 (test "create / insert one row via execute-sql"
       1
