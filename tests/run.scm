@@ -562,7 +562,7 @@
                   "foo" "bar")
             (exec (sql db "insert or ignore into a values(?,?)")
                   "foo" "bar")
-            (exec (sql db "insert or ignore into a values(?,?)")
+            (exec (sql db "insert or ignore into a values(?,?)") ;fixme hangs
                   "foo" "bar"))))
 
 (test-group

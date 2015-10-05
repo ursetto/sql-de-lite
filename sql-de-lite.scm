@@ -191,12 +191,13 @@ int busy_notification_handler(void *ctx, int times) {
 ;; always embedded in a sqlite-statement.
 (define-record-type sqlite-statement-handle
   (make-handle ptr column-names
-               parameter-count run-state)
+               parameter-count cached? run-state)
   handle?
   (ptr handle-ptr set-handle-ptr!)
   (column-names handle-column-names set-handle-column-names!)
   (parameter-count handle-parameter-count)
-  ;; cached? flag avoids a cache-ref to check existence.
+  ;; cached? flag indicates statement is prepared, but inactive in cache (finalization is indicated by handle/ptr #f)
+  (cached? handle-cached? set-handle-cached!)
   (run-state handle-run-state set-handle-run-state!))
 
 ;; Convenience accessors for guts of statement.  Should be inlined.
@@ -212,6 +213,10 @@ int busy_notification_handler(void *ctx, int times) {
   (handle-parameter-count (statement-handle s)))
 (define (statement-run-state s)
   (handle-run-state (statement-handle s)))
+(define (statement-cached? s)
+  (handle-cached? (statement-handle s)))
+(define (set-statement-cached! s b)
+  (set-handle-cached! (statement-handle s) b))
 ;; use an int instead of symbol; this is internal, and avoids mutations
 (define (statement-reset? s)
   (= 0 (handle-run-state (statement-handle s))))
@@ -237,7 +242,8 @@ int busy_notification_handler(void *ctx, int times) {
 
 (define (finalized? stmt)             ; inline
   (or (not (statement-handle stmt))
-      (not (statement-ptr stmt))))
+      (not (statement-ptr stmt))
+      (statement-cached? stmt)))      ; consider cached statement to be finalized (or change 2 uses of finalized?)
 
 ;;; High-level interface
 
@@ -252,7 +258,7 @@ int busy_notification_handler(void *ctx, int times) {
 ;; cause an infinite loop in a nested query context.
 (define (resurrect s)                ; inline
   (cond ((finalized? s)
-         (prepare! s))
+         (prepare! s))            ; prepare! should probably be inlined here
         (else
          (reset s))))
 
@@ -270,6 +276,17 @@ int busy_notification_handler(void *ctx, int times) {
               abnormal
               (c ex))
             (lambda () protected)))
+       normal))))
+(define-syntax unwind-protect*
+  (syntax-rules ()
+    ((_ protected cleanup)
+     (unwind-protect* protected cleanup cleanup))
+    ((_ protected normal abnormal)
+     (begin0
+         (handle-exceptions exn
+             (begin abnormal
+                    (abort exn))
+           protected)
        normal))))
 
 ;; Resurrects s, binds args to s, performs a query*, and finalizes the statement.
@@ -306,11 +323,13 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Resurrects s, binds args to s and performs an exec*.
 (define (exec s . args)
   (resurrect s)
-  (fast-unwind-protect*
+  (unwind-protect*
    (and (apply bind-parameters s args)
         (exec* s))
    (finalize s)
-   (finalize-transient s)))
+   (begin
+     ;     (raise-database-errors #f)
+     (finalize-transient s))))
 
 ;; Executes statement s, returning the number of changes (if the
 ;; result set has no columns as in INSERT, DELETE) or the first row
@@ -410,6 +429,7 @@ int busy_notification_handler(void *ctx, int times) {
                        (make-handle stmt
                                     #f  ; names
                                     nparam
+                                    #f  ; cached?
                                     0)) ; run-state
                      ;; Not strictly an error, but to handle it properly we must
                      ;; create a dummy statement and change all statement interfaces
@@ -438,17 +458,23 @@ int busy_notification_handler(void *ctx, int times) {
   (let* ((db  (statement-db s))
          (sql (statement-sql s))
          (c (db-statement-cache db)))
+    (print 'prepare! 'cache-status)
+    (lru-cache-walk c print)
     (cond ((statement-transient? s) ; don't pull transient stmts from cache, even if matching SQL available
            (set-statement-handle! s (prepare-handle db sql))
            s)
           ((lru-cache-ref c sql)
-           => (lambda (s)
-                (cond ((statement-running? s) ; FIXME: can't happen anymore; to delete
+           => (lambda (s1)
+                (print "pulled statement from cache " s1)
+                (cond ((statement-running? s1) ; FIXME: can't happen anymore; to delete
                        (error 'prepare
-                              "cached statement is currently executing" s))
-                      ((statement-done? s) ; FIXME: can't happen anymore; to delete
-                       (reset s)))
-                (lru-cache-delete! c sql)
+                              "cached statement is currently executing" s1))
+                      ((statement-done? s1) ; FIXME: can't happen anymore; to delete
+                       (reset s1)))
+                (lru-cache-set! c sql (make-statement #f #f #f #f))   ; FIXME: temp to avoid deleter invocation
+                (lru-cache-delete! c sql)  ; warning, calls deleter
+                (set-statement-handle! s (statement-handle s1))
+                (set-statement-cached! s #f)
                 s))
           ((prepare-handle db sql)
            => (lambda (h)
@@ -463,11 +489,17 @@ int busy_notification_handler(void *ctx, int times) {
 ;; design error) so we check if the statement text exists in the cache first, which serves the double purpose if
 ;; reordering it to MRU if so.
 (define (cache-statement! s)
+  (print "attempting to cache statement " s)
   (and (not (statement-transient? s))
        (let* ((c (db-statement-cache (statement-db s)))
               (sql (statement-sql s)))
+         (print "checking for existence of " s)
          (and (not (lru-cache-ref c sql))
-              (lru-cache-set! c sql s)))))
+              (begin
+                (print "updating non-existent " s)
+                #t)
+              (lru-cache-set! c sql s)
+              (set-statement-cached! s #t)))))
 
 (define (prepare db sqlst)
   (resurrect (sql db sqlst)))
@@ -540,10 +572,18 @@ int busy_notification_handler(void *ctx, int times) {
 ;; statement is not removed from the cache.  Finalization is indicated
 ;; by #f in the statement-handle pointer slot.
 (define (finalize-transient stmt)     ; internal
-  (or (not (statement-ptr stmt))
+  (or (not (statement-handle stmt))   ; to avoid throwing error in query/exec unwind-protect; would be a programming error
+      (not (statement-ptr stmt))
       (not (db-ptr (statement-db stmt))) ; [*]
+      (begin
+        (print 'finalize-transient 'statement stmt)
+        (print 'handle (statement-handle stmt))
+        (print 'db (statement-db stmt))
+        (print 'ptr (statement-ptr stmt))
+        #f)
       (let ((rv (sqlite3_finalize
                  (nonnull-statement-ptr stmt)))) ; checks db here
+        (print 'rv rv)
         (set-statement-ptr! stmt #f)
         (cond ((= rv status/abort)
                (database-error
@@ -1224,10 +1264,7 @@ int busy_notification_handler(void *ctx, int times) {
                                         #f #f #f #f #f)))
     (if (= status/ok rv)
         (void)
-        (database-error db rv 'unregister-function!))))
-
-
-  )  ; module
+        (database-error db rv 'unregister-function!)))))  ; module
 
 ;; Copyright (c) 2009-2012 Jim Ursetto.  All rights reserved.
 ;; 
