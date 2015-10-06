@@ -7,6 +7,12 @@
 ;;        when query/exec is not used, since cache no longer covers this.  However, we could also just
 ;;        consider this a user error.  Note this may be required to implement reset-running-queries!.
 
+;; FIXME: May need to store cached statements in a certain way that they can't be executed.  Otherwise we
+;; could finalize a statement, keep its handle, then run operations like step/fetch without resurrecting it first ---
+;;  then the cached statement will be running, violating the invariant that cached statements are inactive.  We either
+;;  need to zero out the handle in the SQL statement (meaning the cache has to store copies), or -- safer but slower --
+;;  all low-level operations would have to confirm the statement is not cached yet.
+
 ;;; Direct-to-C
 
 #>  #include <sqlite3.h> <#
@@ -152,8 +158,14 @@ int busy_notification_handler(void *ctx, int times) {
 (define-syntax begin0                 ; multiple values discarded
   (syntax-rules () ((_ e0 e1 ...)
                     (let ((tmp e0)) e1 ... tmp))))
+;; (define-syntax dprint
+;;   (syntax-rules () ((_ e0 ...)
+;;                     (print e0 ...))))
+(define-syntax dprint
+  (syntax-rules () ((_ e0 ...)
+                    (void))))
 
-;;; Records
+;;;
 
 (define-record-type sqlite-database
   (make-db ptr filename busy-handler invoked-busy-handler? safe-step? statement-cache)
@@ -458,14 +470,14 @@ int busy_notification_handler(void *ctx, int times) {
   (let* ((db  (statement-db s))
          (sql (statement-sql s))
          (c (db-statement-cache db)))
-    (print 'prepare! 'cache-status)
-    (lru-cache-walk c print)
+    (dprint 'prepare! 'cache-status)
+    ;;    (lru-cache-walk c print)
     (cond ((statement-transient? s) ; don't pull transient stmts from cache, even if matching SQL available
            (set-statement-handle! s (prepare-handle db sql))
            s)
           ((lru-cache-ref c sql)
            => (lambda (s1)
-                (print "pulled statement from cache " s1)
+                (dprint "pulled statement from cache " s1)
                 (cond ((statement-running? s1) ; FIXME: can't happen anymore; to delete
                        (error 'prepare
                               "cached statement is currently executing" s1))
@@ -489,14 +501,14 @@ int busy_notification_handler(void *ctx, int times) {
 ;; design error) so we check if the statement text exists in the cache first, which serves the double purpose if
 ;; reordering it to MRU if so.
 (define (cache-statement! s)
-  (print "attempting to cache statement " s)
+  (dprint "attempting to cache statement " s)
   (and (not (statement-transient? s))
        (let* ((c (db-statement-cache (statement-db s)))
               (sql (statement-sql s)))
-         (print "checking for existence of " s)
+         (dprint "checking for existence of " s)
          (and (not (lru-cache-ref c sql))
               (begin
-                (print "updating non-existent " s)
+                (dprint "updating non-existent " s)
                 #t)
               (lru-cache-set! c sql s)
               (set-statement-cached! s #t)))))
@@ -576,14 +588,14 @@ int busy_notification_handler(void *ctx, int times) {
       (not (statement-ptr stmt))
       (not (db-ptr (statement-db stmt))) ; [*]
       (begin
-        (print 'finalize-transient 'statement stmt)
-        (print 'handle (statement-handle stmt))
-        (print 'db (statement-db stmt))
-        (print 'ptr (statement-ptr stmt))
+        (dprint 'finalize-transient 'statement stmt)
+        (dprint 'handle (statement-handle stmt))
+        (dprint 'db (statement-db stmt))
+        (dprint 'ptr (statement-ptr stmt))
         #f)
       (let ((rv (sqlite3_finalize
                  (nonnull-statement-ptr stmt)))) ; checks db here
-        (print 'rv rv)
+        (dprint 'rv rv)
         (set-statement-ptr! stmt #f)
         (cond ((= rv status/abort)
                (database-error
