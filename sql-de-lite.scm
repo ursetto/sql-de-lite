@@ -249,13 +249,14 @@ int busy_notification_handler(void *ctx, int times) {
   ;; All references to statement ptr implicitly check for valid db.
   (or (and (nonnull-db-ptr (statement-db stmt))
            (statement-handle stmt)
+           (not (statement-cached? stmt))
            (statement-ptr stmt))
       (error 'sql-de-lite "operation on finalized statement")))
 
 (define (finalized? stmt)             ; inline
   (or (not (statement-handle stmt))
-      (not (statement-ptr stmt))
-      (statement-cached? stmt)))      ; consider cached statement to be finalized (or change 2 uses of finalized?)
+      (statement-cached? stmt)
+      (not (statement-ptr stmt))))      ; consider cached statement to be finalized (or change 2 uses of finalized?)
 
 ;;; High-level interface
 
@@ -335,7 +336,7 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Resurrects s, binds args to s and performs an exec*.
 (define (exec s . args)
   (resurrect s)
-  (unwind-protect*
+  (fast-unwind-protect*
    (and (apply bind-parameters s args)
         (exec* s))
    (finalize s)
@@ -594,7 +595,7 @@ int busy_notification_handler(void *ctx, int times) {
         (dprint 'ptr (statement-ptr stmt))
         #f)
       (let ((rv (sqlite3_finalize
-                 (nonnull-statement-ptr stmt)))) ; checks db here
+                 (statement-ptr stmt)))) ; don't use nonnull-statement-ptr, because that checks cached status
         (dprint 'rv rv)
         (set-statement-ptr! stmt #f)
         (cond ((= rv status/abort)

@@ -62,16 +62,16 @@
 
 (test-group
  "autocommit"
- (test "autocommit? reports #t outside transaction" #t
+ (test "autocommit? reports #t outside transaction" '(#t)
        (call-with-database ":memory:"
          (lambda (db)
-           (autocommit? db))))
- (test "autocommit? reports #f during transaction" #f
+           (list (autocommit? db)))))
+ (test "autocommit? reports #f during transaction" '(#f)   ; box in list because #f will rollback transaction
        (call-with-database ":memory:"
          (lambda (db)
            (with-transaction db
              (lambda ()
-               (autocommit? db)))))))
+               (list (autocommit? db))))))))
 
 (test-group
  "rollback"
@@ -130,22 +130,24 @@
 
 (test-group
  "reset"
- (test "query resets statement immediately (normal exit)"
-       '((1) (1))
+ (test "fetch after query is illegal (normal exit)"      ; behavior now illegal -- 
+       '((1) (fetch-exn))
        (call-with-database ":memory:"
          (lambda (db)
            (let ((s (sql db "select 1 union select 2;")))
              (list (query fetch s)
-                   (fetch s))))))
- (test "query resets statement immediately (error exit)"
-       '((oops) (1))
+                   (handle-exceptions exn '(fetch-exn)
+                     (fetch s)))))))
+ (test "fetch after query is illegal (error exit)"
+       '((query-exn) (fetch-exn))
        (call-with-database ":memory:"
          (lambda (db)
            (let ((s (sql db "select 1 union select 2;")))
-             (list (handle-exceptions exn '(oops)
-                     (query (lambda (s) (fetch s) (error 'oops))
+             (list (handle-exceptions exn '(query-exn)
+                     (query (lambda (s) (fetch s) (error 'query-exn))
                             s))
-                   (fetch s))))))
+                   (handle-exceptions exn '(fetch-exn)
+                     (fetch s)))))))
  (test "exec resets query immediately"
        '((1) (1))
        (call-with-database ":memory:"
