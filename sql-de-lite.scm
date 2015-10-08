@@ -895,18 +895,15 @@ int busy_notification_handler(void *ctx, int times) {
 
 (define (call-with-database filename proc)
   (let ((db (open-database filename)))
-    (let ((c (current-exception-handler)))
-      (begin0
-          (with-exception-handler
-           (lambda (ex)
-             ;; Failing to close the db will leak resources, but it's not clear
-             ;; what we can do other than warn and throw original exception.
-             (or (close-database db)
-                 (warning "leaked open database handle" db))
-             (c ex))
-           (lambda () (proc db)))
-        (or (close-database db)
-            (warning "leaked open database handle" db))))))
+    (begin0
+        (handle-exceptions exn
+            (begin
+              (or (close-database db)
+                  (warning "leaked open database handle" db))
+              (abort exn))
+          (proc db))
+      (or (close-database db)
+            (warning "leaked open database handle" db)))))
 
 (define (error-code db)
   (int->status (sqlite3_errcode (nonnull-db-ptr db))))
