@@ -158,24 +158,25 @@ int busy_notification_handler(void *ctx, int times) {
 (define-syntax begin0                 ; multiple values discarded
   (syntax-rules () ((_ e0 e1 ...)
                     (let ((tmp e0)) e1 ... tmp))))
-;; (define-syntax dprint
-;;   (syntax-rules () ((_ e0 ...)
-;;                     (print e0 ...))))
 (define-syntax dprint
   (syntax-rules () ((_ e0 ...)
-                    (void))))
+                    (print e0 ...))))
+;; (define-syntax dprint
+;;   (syntax-rules () ((_ e0 ...)
+;;                     (void))))
 
 ;;;
 
 (define-record-type sqlite-database
-  (make-db ptr filename busy-handler invoked-busy-handler? safe-step? statement-cache)
+  (make-db ptr filename busy-handler invoked-busy-handler? safe-step? statement-cache active-statements)
   db?
   (ptr db-ptr set-db-ptr!)
   (filename db-filename)
   (busy-handler db-busy-handler set-db-busy-handler!)
   (invoked-busy-handler? db-invoked-busy-handler? set-db-invoked-busy-handler?!)
   (safe-step? db-safe-step? set-db-safe-step!)  ;; global flag indicating step needs safe-lambda
-  (statement-cache db-statement-cache))
+  (statement-cache db-statement-cache)
+  (active-statements db-active-statements))
 (define-record-printer (sqlite-database db port)
   (fprintf port "#<sqlite-database ~A on ~S>"
            (or (db-ptr db)
@@ -185,6 +186,19 @@ int busy_notification_handler(void *ctx, int times) {
 (define-inline (nonnull-db-ptr db)
   (or (db-ptr db)
       (error 'sql-de-lite "operation on closed database")))
+
+;; better implemented as a set or even plain list
+(use srfi-69)
+(define (make-active-statements)
+  (make-hash-table))
+;; as a convenience, derive the database from the statement.  forward reference.
+(define (add-active-statement! s)
+  (hash-table-set! (db-active-statements (statement-db s)) s #t))
+(define (remove-active-statement! s)
+  (hash-table-delete! (db-active-statements (statement-db s)) s))
+(define (for-each-active-statement db proc)
+  (hash-table-walk (db-active-statements db)
+                   (lambda (k v) (proc k))))
 
 ;; Thin wrapper around sqlite-statement-handle, adding the two keys
 ;; which allows us to reconstitute a finalized statement.
@@ -474,8 +488,10 @@ int busy_notification_handler(void *ctx, int times) {
     (dprint 'prepare! 'cache-status)
     ;;    (lru-cache-walk c print)
     (cond ((statement-transient? s) ; don't pull transient stmts from cache, even if matching SQL available
-           (set-statement-handle! s (prepare-handle db sql))
-           s)
+           (let ((h (prepare-handle db sql)))
+             (set-statement-handle! s (prepare-handle db sql))
+             (add-active-statement! s)
+             s))
           ((lru-cache-ref c sql)
            => (lambda (s1)
                 (dprint "pulled statement from cache " s1)
@@ -492,6 +508,7 @@ int busy_notification_handler(void *ctx, int times) {
           ((prepare-handle db sql)
            => (lambda (h)
                 (set-statement-handle! s h)
+                (add-active-statement! s)
                 s))
           (else #f)))) ; #f -> error in prepare-handle (when errors disabled).  could call database-error anyway
 
@@ -510,9 +527,11 @@ int busy_notification_handler(void *ctx, int times) {
          (and (not (lru-cache-ref c sql))
               (begin
                 (dprint "updating non-existent " s)
-                #t)
-              (lru-cache-set! c sql s)
-              (set-statement-cached! s #t)))))
+                (reset s)   ; must do this prior to caching; currently, reset is illegal on cached statements
+                (lru-cache-set! c sql s)
+                (set-statement-cached! s #t)
+                (remove-active-statement! s)
+                #t)))))
 
 (define (prepare db sqlst)
   (resurrect (sql db sqlst)))
@@ -578,7 +597,7 @@ int busy_notification_handler(void *ctx, int times) {
 (define (finalize stmt)
   (or (finalized? stmt)
       (if (cache-statement! stmt)
-          (reset stmt)
+          #t
           (finalize-transient stmt))))
 
 ;; Finalize a statement now, regardless of its cached status.  The
@@ -598,6 +617,7 @@ int busy_notification_handler(void *ctx, int times) {
                  (statement-ptr stmt)))) ; don't use nonnull-statement-ptr, because that checks cached status
         (dprint 'rv rv)
         (set-statement-ptr! stmt #f)
+        (remove-active-statement! stmt)
         (cond ((= rv status/abort)
                (database-error
                 (statement-db stmt) rv 'finalize))
@@ -865,25 +885,20 @@ int busy_notification_handler(void *ctx, int times) {
                      (make-lru-cache (prepared-cache-size)
                                      string=?
                                      (lambda (sql stmt)
-                                       (finalize-transient stmt))))
+                                       (finalize-transient stmt)))
+                     (make-active-statements))
             (if db-ptr
-                (database-error (make-db db-ptr filename #f #f #f #f) rv
+                (database-error (make-db db-ptr filename #f #f #f #f #f) rv
                                 'open-database filename)
                 (error 'open-database "internal error: out of memory")))))))
 
 (define (close-database db)
   (let ((db-ptr (nonnull-db-ptr db)))
+    ;; It's not safe to finalize all open statements known to the database library,
+    ;; because SQLite itself may prepare statements under the hood (e.g. with FTS) and a double
+    ;; finalize is fatal.  Therefore we must track our own open statements.
     (lru-cache-flush! (db-statement-cache db))
-    ;; It's not safe to finalize all open statements, because SQLite itself
-    ;; may prepare statements under the hood (e.g. with FTS) and a double
-    ;; finalize is fatal.  Therefore we have removed this protective measure.
-    #;
-    (do ((stmt (sqlite3_next_stmt db-ptr #f) ; finalize pending statements
-               (sqlite3_next_stmt db-ptr stmt)))
-        ((not stmt))
-      (warning (sprintf "finalizing pending statement: ~S"
-                        (sqlite3_sql stmt)))
-      (sqlite3_finalize stmt))
+    (for-each-active-statement db finalize-transient)
     (cond ((eqv? status/ok (sqlite3_close db-ptr))
            (set-db-ptr! db #f)
            (object-release (db-invoked-busy-handler? db))
@@ -992,28 +1007,12 @@ int busy_notification_handler(void *ctx, int times) {
         (else
          ;; (reset-running-queries! db)
          (exec (sql db "commit;")))))
-;; Reset all running queries.  A list of all prepared statements known
-;; to the library is obtained; if a statement is found in the cache,
-;; we call (reset) on it.  If it is not, it is a transient statement,
-;; which we do not track; forcibly reset it as its run state is unknown.
-;; Statements that fall off the cache have been finalized and are
-;; consequently not known to the library.
+;; Forcibly reset all running queries (tracked in the active statement list).
 (define (reset-running-queries! db)
-  (let ((db-ptr (nonnull-db-ptr db))
-        (c (db-statement-cache db)))
-    (do ((sptr (sqlite3_next_stmt db-ptr #f)
-               (sqlite3_next_stmt db-ptr sptr)))
-        ((not sptr))
-      (let* ((sql (sqlite3_sql sptr))
-             (s (lru-cache-ref c sql)))
-        (if (and s
-                 (pointer=? (statement-ptr s) sptr))
-            (reset-unconditionally s)   ; in case our state is out of sync
-            (begin
-              (fprintf
-               (current-error-port)
-               "Warning: resetting transient prepared statement: ~S\n" sql)
-              (sqlite3_reset sptr)))))))
+  (for-each-active-statement db
+                             (lambda (s)
+                               (dprint "resetting running query " s)
+                               (reset-unconditionally s))))
 
 ;;; Busy handling
 
