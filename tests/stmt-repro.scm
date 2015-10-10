@@ -69,31 +69,31 @@
 
 ; Test scenarios
 (test-group
-  "Tests with sql/transient for long running statement."
+  "sql/transient for long running statement"
   (test ; Test 1 as documented above.
-    "With enough cache for all non-transient statements"
+    "with enough cache for all non-transient statements"
     2
     (running-stmt-evicted sql/transient 2))
 
   (test ; Test 2 as documented above.
-    "With enough cache for running non-transient statements"
+    "with enough cache for running non-transient statements"
     2
     (running-stmt-evicted sql/transient 1)))
 
 (test-group
-  "Tests with sql for long running statement."
+  "sql for long running statement"
   (test ; Test 3 as documented above.
-    "With enough cache for all statements"
+    "with enough cache for all statements"
     2
     (running-stmt-evicted sql 3))
 
   (test ; Test 4 as documented above.
-    "With enough cache for running statements"
+    "with enough cache for running statements"
     2
     (running-stmt-evicted sql 2))
 
   (test ; Test 5 as documented above.
-    "With insufficient cache"
+    "with insufficient cache"
     2
     (running-stmt-evicted sql 1)))
 
