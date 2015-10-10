@@ -996,8 +996,10 @@ int busy_notification_handler(void *ctx, int times) {
   (sqlite3_get_autocommit (nonnull-db-ptr db)))
 
 ;; Rollback current transaction.  Reset running queries before doing
-;; so, as rollback would fail if read or read/write queries are
+;; so, as rollback would fail if read/write queries are
 ;; running.  Rolling back when no transaction is active returns #t.
+;; As of 3.7.11, running read queries do not prevent rollback, but we
+;; have no way to only reset running read/write queries.
 (define (rollback db)
   (cond ((autocommit? db) #t)
         (else

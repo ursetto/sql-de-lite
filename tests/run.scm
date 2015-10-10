@@ -298,7 +298,7 @@
               (s2 (prepare-transient db "select 3 union select 4")))
           (let ((rv (list (fetch s1)
                           (fetch s2))))
-            (close-database db)         ;; warning: database doesn't get closed here anymore
+            (close-database db)
             (finalize s1)
             (finalize s2)
             rv))))
@@ -312,16 +312,15 @@
                      (close-database db)      ;; returns #f if statements still open
                      (step s1)))))
 
-;; This is not "good" behavior, but expected.
-(test "Open transient statements leave database open after call/db"
+(test "Open transient statements closed after call/db"
       ;; They are finalized (you may receive a warning), but don't show
       ;; up as FINALIZED?.  Currently, we do not confirm finalization
       ;; other than through manually inspecting the warning.
       #t
       (let ((s1 #f) (s2 #f) (db0 #f))
         (handle-exceptions ex
-            (and (not (finalized? s1)) (not (finalized? s2))
-                 (not (database-closed? db0)))
+            (and (finalized? s1) (finalized? s2)
+                 (database-closed? db0))
           (call-with-database ":memory:"
             (lambda (db)
               (set! db0 db)
