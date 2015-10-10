@@ -1107,6 +1107,7 @@
 
              ;; This used to fail because the cache only supported 1 running statement at a time with
              ;; the same SQL.  Now that statements aren't cached until finalization, this works.
+             (define s2 #f)
              (test "preparing statement with same SQL text as executing statement works"
                    '(("foo" "bar")
                      ("foo" "bar")
@@ -1115,15 +1116,15 @@
                    (begin
                      (reset s)
                      (let ((v (fetch s)))
-                       (let ((s2 (prepare db1 "select * from c;")))
-                         (list v
-                               (fetch s2)
-                               (fetch s)
-                               (fetch s2))))))
+                       (set! s2 (prepare db1 "select * from c;"))
+                       (list v
+                             (fetch s2)
+                             (fetch s)
+                             (fetch s2)))))
 
              ;; Reset all statements now.  If we don't, ROLLBACK fails with
              ;; "cannot rollback transaction - SQL statements in progress".
-             (reset s) (reset ic) (reset iq)
+             (reset s) (reset ic) (reset iq) (reset s2)
 
              ;; May be wise to pull out into separate database connections to avoid
              ;; disrupting this test.

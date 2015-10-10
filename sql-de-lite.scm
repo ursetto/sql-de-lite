@@ -158,12 +158,12 @@ int busy_notification_handler(void *ctx, int times) {
 (define-syntax begin0                 ; multiple values discarded
   (syntax-rules () ((_ e0 e1 ...)
                     (let ((tmp e0)) e1 ... tmp))))
-;; (define-syntax dprint
-;;   (syntax-rules () ((_ e0 ...)
-;;                     (print e0 ...))))
- (define-syntax dprint
-   (syntax-rules () ((_ e0 ...)
-                     (void))))
+(define-syntax dprint
+  (syntax-rules () ((_ e0 ...)
+                    (print e0 ...))))
+ ;; (define-syntax dprint
+ ;;   (syntax-rules () ((_ e0 ...)
+ ;;                     (void))))
 
 ;;;
 
