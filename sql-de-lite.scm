@@ -489,7 +489,7 @@ int busy_notification_handler(void *ctx, int times) {
     ;;    (lru-cache-walk c print)
     (cond ((statement-transient? s) ; don't pull transient stmts from cache, even if matching SQL available
            (let ((h (prepare-handle db sql)))
-             (set-statement-handle! s (prepare-handle db sql))
+             (set-statement-handle! s h)
              (add-active-statement! s)
              s))
           ((lru-cache-ref c sql)
