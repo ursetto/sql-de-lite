@@ -75,16 +75,16 @@
 
 (test-group
  "rollback"
- ;; This is no longer a problem in 3.7.11 so we are not going to test it.
- #;
- (test-error "Open read queries prevent SQL ROLLBACK" ; will throw SQLITE_BUSY
-             (call-with-database ":memory:"
-               (lambda (db)
-                 (exec (sql db "begin;"))
-                 (or (equal? '(1)
-                             (fetch (prepare db "select 1 union select 2")))
-                     (error 'fetch "fetch failed during test"))
-                 (exec (sql db "rollback;")))))
+
+ (test "Open read queries do not prevent SQL ROLLBACK"  ; behavior changed: allowed in >= 3.7.11
+       0
+       (call-with-database ":memory:"
+                           (lambda (db)
+                             (exec (sql db "begin;"))
+                             (or (equal? '(1)
+                                         (fetch (prepare db "select 1 union select 2")))
+                                 (error 'fetch "fetch failed during test"))
+                             (exec (sql db "rollback;")))))
  (test "Open read queries ok with SQL COMMIT"
        #t
        (call-with-database ":memory:"
