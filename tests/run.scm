@@ -519,10 +519,8 @@
               (exec (sql db "create table cache(k,v);"))
               (prepare db "insert into cache values('jml', 'oak');")))))
     (exec s)))
-;; Not good behavior, but expected.
  (test       ;;  operation on closed database
-  ;; Expected: Leaked database handle warning.
-  "Exec prepared statement succeeds due to failed database close (cache disabled)"
+  "Exec prepared statement fails after database close (cache disabled)"
   #t
   (parameterize ((prepared-cache-size 0))
     (let* ((db0 #f)
@@ -532,8 +530,11 @@
                  (set! db0 db)
                  (exec (sql db "create table cache(k,v);"))
                  (prepare db "insert into cache values('jml', 'oak');")))))
-      (and (not (database-closed? db0))
-           (= 1 (exec s))))))
+      (and (database-closed? db0)
+           ; fixme: should check that s is a statement here           
+           (handle-exceptions exn #t
+             (and (= 1 (exec s))
+                  #f))))))
 
  (test
   ;;  Should error with operation on closed database

@@ -513,7 +513,8 @@ int busy_notification_handler(void *ctx, int times) {
           (else #f)))) ; #f -> error in prepare-handle (when errors disabled).  could call database-error anyway
 
 ;; Attempt to cache statement S.
-;; Caching a statement could fail when 1) statement is transient or 2) when matching SQL text already exists in the cache.
+;; Caching a statement could fail when 1) statement is transient 2) cache is disabled 3) when matching SQL text
+;; already exists in the cache.
 ;; Because the LRU cache can only hold statements with unique text, we can't cache more than one of them.  Also, the
 ;; lru-cache-set! operation on an existing entry doesn't reorder the cache or fire the deleter (this is arguably a
 ;; design error) so we check if the statement text exists in the cache first, which serves the double purpose if
@@ -524,11 +525,12 @@ int busy_notification_handler(void *ctx, int times) {
        (let* ((c (db-statement-cache (statement-db s)))
               (sql (statement-sql s)))
          (dprint "checking for existence of " s)
-         (and (not (lru-cache-ref c sql))
+         (and (> (lru-cache-capacity c) 0)          ; Verify cache enabled here -- otherwise set! will fail
+              (not (lru-cache-ref c sql))
               (begin
                 (dprint "updating non-existent " s)
                 (reset s)   ; must do this prior to caching; currently, reset is illegal on cached statements
-                (lru-cache-set! c sql s)
+                (lru-cache-set! c sql s)           ; Note: perhaps assert on #f return (cache fail)?
                 (set-statement-cached! s #t)
                 (remove-active-statement! s)
                 #t)))))
