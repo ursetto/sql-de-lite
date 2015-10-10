@@ -1280,7 +1280,7 @@ int busy_notification_handler(void *ctx, int times) {
         (void)
         (database-error db rv 'unregister-function!)))))  ; module
 
-;; Copyright (c) 2009-2012 Jim Ursetto.  All rights reserved.
+;; Copyright (c) 2009-2015 Jim Ursetto.  All rights reserved.
 ;; 
 ;; Redistribution and use in source and binary forms, with or without
 ;; modification, are permitted provided that the following conditions are met:
