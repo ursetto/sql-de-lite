@@ -158,12 +158,12 @@ int busy_notification_handler(void *ctx, int times) {
 (define-syntax begin0                 ; multiple values discarded
   (syntax-rules () ((_ e0 e1 ...)
                     (let ((tmp e0)) e1 ... tmp))))
-(define-syntax dprint
-  (syntax-rules () ((_ e0 ...)
-                    (print e0 ...))))
 ;; (define-syntax dprint
 ;;   (syntax-rules () ((_ e0 ...)
-;;                     (void))))
+;;                     (print e0 ...))))
+ (define-syntax dprint
+   (syntax-rules () ((_ e0 ...)
+                     (void))))
 
 ;;;
 
@@ -909,6 +909,8 @@ int busy_notification_handler(void *ctx, int times) {
 (define (database-closed? db)
   (not (db-ptr db)))
 
+;; It may be preferable sometimes to error out when a database handle is leaked, as this
+;; is generally an error now that we track all statements.
 (define (call-with-database filename proc)
   (let ((db (open-database filename)))
     (begin0
@@ -919,7 +921,7 @@ int busy_notification_handler(void *ctx, int times) {
               (abort exn))
           (proc db))
       (or (close-database db)
-            (warning "leaked open database handle" db)))))
+          (warning "leaked open database handle" db)))))
 
 (define (error-code db)
   (int->status (sqlite3_errcode (nonnull-db-ptr db))))

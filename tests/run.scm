@@ -128,9 +128,11 @@
                #f ; rollback
                ))))))
 
+;; FIXME: It is not possible to test statements for reset status.  We could test for finalized status though.
+
 (test-group
  "reset"
- (test "fetch after query is illegal (normal exit)"      ; behavior now illegal -- 
+ (test "fetch after query is illegal (normal exit)"      ; behavior now illegal -- resurrect required
        '((1) (fetch-exn))
        (call-with-database ":memory:"
          (lambda (db)
@@ -148,23 +150,56 @@
                             s))
                    (handle-exceptions exn '(fetch-exn)
                      (fetch s)))))))
- (test "exec resets query immediately"
-       '((1) (1))
+ (test "fetch after exec is illegal"  ; behavior now illegal
+       '((1) (fetch-exn))
        (call-with-database ":memory:"
          (lambda (db)
            (let ((s (sql db "select 1 union select 2;")))
              (list (exec s)
-                   (fetch s))))))
+                   (handle-exceptions exn '(fetch-exn)
+                     (fetch s)))))))
+ (test "query finalizes statement -- cache on"      ; really we just want to test for reset
+       '((1) #t)
+       (call-with-database ":memory:"
+         (lambda (db)
+           (let ((s (sql db "select 1 union select 2;")))
+             (list (query fetch s)
+                   (finalized? s))))))
+ (test "query finalizes statement -- cache off"      ; really we just want to test for reset
+       '((1) #t)
+       (parameterize ((prepared-cache-size 0))
+         (call-with-database
+          ":memory:"
+          (lambda (db)
+            (let ((s (sql db "select 1 union select 2;")))
+              (list (query fetch s)
+                    (finalized? s))))))) 
+ (test "exec finalizes statement -- cache on"      ; really we just want to test for reset
+       '((1) #t)
+       (call-with-database ":memory:"
+         (lambda (db)
+           (let ((s (sql db "select 1 union select 2;")))
+             (list (exec s)
+                   (finalized? s))))))
+ (test "exec finalizes statement -- cache off"
+       '((1) #t)
+       (parameterize ((prepared-cache-size 0))
+         (call-with-database
+          ":memory:"
+          (lambda (db)
+            (let ((s (sql db "select 1 union select 2;")))
+              (list (exec s)
+                    (finalized? s)))))))
  (test "exec resets even when column count = 0"
        ;; We now unconditionally reset after any exec, even if it returns
        ;; no rows, because ROLLBACK does not behave properly if not reset.
-       '(1 ())
+       '(1 #t)
              (call-with-database ":memory:"
                (lambda (db)
                  (exec (sql db "create table a(k,v);"))
                  (let ((s (sql db "insert or ignore into a values(1,2);")))
                    (list (exec s)
-                         (fetch s))))))
+                         (finalized? s))))))
  )
 
 (test-group
