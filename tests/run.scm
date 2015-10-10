@@ -522,7 +522,7 @@
 ;; Not good behavior, but expected.
  (test       ;;  operation on closed database
   ;; Expected: Leaked database handle warning.
-  "Exec prepared statement succeeds due to failed database close"
+  "Exec prepared statement succeeds due to failed database close (cache disabled)"
   #t
   (parameterize ((prepared-cache-size 0))
     (let* ((db0 #f)
@@ -534,11 +534,10 @@
                  (prepare db "insert into cache values('jml', 'oak');")))))
       (and (not (database-closed? db0))
            (= 1 (exec s))))))
- ;; Not good behavior, but expected.
- (test       ;;  Should be operation on closed database, but database is still open.
-  ;; No longer expected: Warning: finalizing pending statement: "insert into cache values('jml', 'oak');"
-  ;; Expected: Leaked database handle warning.
-  "Operating on transient statement succeeds due to failed database close"
+
+ (test
+  ;;  Should error with operation on closed database
+  "Operating on transient statement fails after database close"
   #t
   (let* ((db0 #f)
          (s (call-with-database
@@ -548,8 +547,11 @@
                (exec (sql db "create table cache(k,v);"))
                (prepare-transient
                 db "insert into cache values('jml', 'oak');")))))
-    (and (not (database-closed? db0))
-         (= 1 (exec s)))))
+    (and (database-closed? db0)
+         ; fixme: should check that s is a statement here
+         (handle-exceptions exn #t
+           (and (= 1 (exec s))
+                #f)))))
  (test
   "Resurrected transient statement is still transient"
   #t
