@@ -899,12 +899,15 @@ int busy_notification_handler(void *ctx, int times) {
     ;; finalize is fatal.  Therefore we must track our own open statements.
     (lru-cache-flush! (db-statement-cache db))
     (for-each-active-statement db finalize-transient)
-    (cond ((eqv? status/ok (sqlite3_close db-ptr))
-           (set-db-ptr! db #f)
-           (object-release (db-invoked-busy-handler? db))
-           (set-db-invoked-busy-handler?! db 'database-closed)
-           #t)
-          (else #f))))
+    (let ((rv (sqlite3_close db-ptr)))
+      (cond ((eqv? status/ok rv)
+             (set-db-ptr! db #f)
+             (object-release (db-invoked-busy-handler? db))
+             (set-db-invoked-busy-handler?! db 'database-closed)
+             #t)
+            (else
+             (database-error db rv
+                             'close-database db))))))
 
 (define (database-closed? db)
   (not (db-ptr db)))
