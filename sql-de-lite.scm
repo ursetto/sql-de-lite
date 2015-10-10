@@ -3,10 +3,6 @@
 ;; Copyright (c) 2009 Jim Ursetto.  All rights reserved.
 ;; BSD license at end of file.
 
-;; FIXME: May need to maintain a list of open prepared statements to ensure we can close the database
-;;        when query/exec is not used, since cache no longer covers this.  However, we could also just
-;;        consider this a user error.  Note this may be required to implement reset-running-queries!.
-
 ;; FIXME: May need to store cached statements in a certain way that they can't be executed.  Otherwise we
 ;; could finalize a statement, keep its handle, then run operations like step/fetch without resurrecting it first ---
 ;;  then the cached statement will be running, violating the invariant that cached statements are inactive.  We either

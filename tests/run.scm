@@ -1068,7 +1068,10 @@
                    ;; Perform a step here to show iq is reset after BUSY in step; see next test
                    'busy
                    (sqlite-exception-status
-                    (handle-exceptions e e (step iq))))
+                    (handle-exceptions e
+                        (cond ((sqlite-exception? e) (sqlite-exception-status e))
+                              (else (abort e)))
+                      (step iq))))
 
              ;; (If we don't reset iq after BUSY--currently automatically done in step--
              ;;  then this step will mysteriously "succeed".  I suspect misuse of interface.)
