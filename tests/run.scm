@@ -1060,18 +1060,23 @@
              (test "select step in db1" '("foo" "bar") (fetch s))
              (test "insert step in db2 during select in db1 returns busy"
                    'busy
-                   (sqlite-exception-status
-                    (handle-exceptions e e (exec iq "phlegm" "snot"))))
+                   (begin
+                     (bind-parameters iq "phlegm" "snot")
+                     (handle-exceptions e
+                         (cond ((sqlite-exception? e)
+                                (sqlite-exception-status e))
+                               (else (abort e)))
+                       (step iq))))
 
              (test "retry the busy insert, expecting busy again"
                    ;; ensure statement is reset properly; if not, we will get a bind error
                    ;; Perform a step here to show iq is reset after BUSY in step; see next test
                    'busy
-                   (sqlite-exception-status
-                    (handle-exceptions e
-                        (cond ((sqlite-exception? e) (sqlite-exception-status e))
-                              (else (abort e)))
-                      (step iq))))
+                   (handle-exceptions e
+                       (cond ((sqlite-exception? e)
+                              (sqlite-exception-status e))
+                             (else (abort e)))
+                     (step iq)))
 
              ;; (If we don't reset iq after BUSY--currently automatically done in step--
              ;;  then this step will mysteriously "succeed".  I suspect misuse of interface.)
