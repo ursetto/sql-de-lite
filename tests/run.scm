@@ -1104,14 +1104,24 @@
 ;;                           (reset s)
 ;;                           (fetch s)))
 
-             (test-error "prepare on executing select fails"
+             ;; This used to fail because the cache only supported 1 running statement at a time with
+             ;; the same SQL.  Now that statements aren't cached until finalization, this works.
+             (test "preparing statement with same SQL text as executing statement works"
+                   '(("foo" "bar")
+                     ("foo" "bar")
+                     ("baz" "quux")
+                     ("baz" "quux"))
                    (begin
-                     (step s)
-                     (prepare db1 "select * from c;")))
+                     (reset s)
+                     (let ((v (fetch s)))
+                       (let ((s2 (prepare db1 "select * from c;")))
+                         (list v
+                               (fetch s2)
+                               (fetch s)
+                               (fetch s2))))))
 
              ;; Reset all statements now.  If we don't, ROLLBACK fails with
              ;; "cannot rollback transaction - SQL statements in progress".
-             ;; This is worrisome and should be investigated further.
              (reset s) (reset ic) (reset iq)
 
              ;; May be wise to pull out into separate database connections to avoid
