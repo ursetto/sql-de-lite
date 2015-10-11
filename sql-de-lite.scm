@@ -22,6 +22,8 @@ int busy_notification_handler(void *ctx, int times) {
 
 ;;; Module definition
 
+(include "sql-de-lite-cache.scm")
+
 (module sql-de-lite
  (
   error-code error-message
@@ -85,7 +87,7 @@ int busy_notification_handler(void *ctx, int times) {
 (import (only data-structures alist-ref))
 (import (only srfi-18 thread-sleep! milliseconds->time))
 (import foreign foreigners)
-(require-extension lru-cache)
+(import sql-de-lite-cache)
 
 ;;; Foreign interface
 
@@ -156,7 +158,7 @@ int busy_notification_handler(void *ctx, int times) {
                     (let ((tmp e0)) e1 ... tmp))))
 ;; (define-syntax dprint
 ;;   (syntax-rules () ((_ e0 ...)
-;;                     (print e0 ...))))
+;;     (print e0 ...))))
 (define-syntax dprint
   (syntax-rules () ((_ e0 ...)
                     (void))))
@@ -481,26 +483,20 @@ int busy_notification_handler(void *ctx, int times) {
   (let* ((db  (statement-db s))
          (sql (statement-sql s))
          (c (db-statement-cache db)))
-    (dprint 'prepare! 'cache-status)
+    (dprint 'prepare!)
     ;;    (lru-cache-walk c print)
     (cond ((statement-transient? s) ; don't pull transient stmts from cache, even if matching SQL available
            (let ((h (prepare-handle db sql)))
              (set-statement-handle! s h)
              (add-active-statement! s)
              s))
-          ((lru-cache-ref c sql)
-           => (lambda (s1)
-                (dprint "pulled statement from cache " s1)
-                (cond ((statement-running? s1) ; FIXME: can't happen anymore; to delete
-                       (error 'prepare
-                              "cached statement is currently executing" s1))
-                      ((statement-done? s1) ; FIXME: can't happen anymore; to delete
-                       (reset s1)))
-                (lru-cache-set! c sql (make-statement #f #f #f #f))   ; FIXME: temp to avoid deleter invocation
-                (lru-cache-delete! c sql)  ; warning, calls deleter
-                (set-statement-handle! s (statement-handle s1))
-                (set-statement-cached! s #f)
-                s))
+          ((lru-cache-remove! c sql)     ; (sql . stmt)
+           => (lambda (L)
+                (let ((s1 (cdr L)))
+                  (dprint "pulled statement from cache " s1)
+                  (set-statement-handle! s (statement-handle s1))
+                  (set-statement-cached! s #f)
+                  s)))
           ((prepare-handle db sql)
            => (lambda (h)
                 (set-statement-handle! s h)
@@ -509,24 +505,16 @@ int busy_notification_handler(void *ctx, int times) {
           (else #f)))) ; #f -> error in prepare-handle (when errors disabled).  could call database-error anyway
 
 ;; Attempt to cache statement S.
-;; Caching a statement could fail when 1) statement is transient 2) cache is disabled 3) when matching SQL text
-;; already exists in the cache.
-;; Because the LRU cache can only hold statements with unique text, we can't cache more than one of them.  Also, the
-;; lru-cache-set! operation on an existing entry doesn't reorder the cache or fire the deleter (this is arguably a
-;; design error) so we check if the statement text exists in the cache first, which serves the double purpose if
-;; reordering it to MRU if so.
+;; Caching a statement could fail when 1) statement is transient 2) cache is disabled.
 (define (cache-statement! s)
   (dprint "attempting to cache statement " s)
   (and (not (statement-transient? s))
-       (let* ((c (db-statement-cache (statement-db s)))
-              (sql (statement-sql s)))
-         (dprint "checking for existence of " s)
-         (and (> (lru-cache-capacity c) 0)          ; Verify cache enabled here -- otherwise set! will fail
-              (not (lru-cache-ref c sql))
+       (let* ((c (db-statement-cache (statement-db s))))
+         (and (> (lru-cache-capacity c) 0)    ; Verify cache enabled here, only because reset precedes cache-add
               (begin
-                (dprint "updating non-existent " s)
+                (dprint "caching " s)
                 (reset s)   ; must do this prior to caching; currently, reset is illegal on cached statements
-                (lru-cache-set! c sql s)           ; Note: perhaps assert on #f return (cache fail)?
+                (lru-cache-add! c (statement-sql s) s)
                 (set-statement-cached! s #t)
                 (remove-active-statement! s)
                 #t)))))
@@ -630,7 +618,7 @@ int busy_notification_handler(void *ctx, int times) {
     (reset-unconditionally stmt))
   stmt)
 (define (reset-unconditionally stmt)
-  (sqlite3_reset (nonnull-statement-ptr stmt))
+  (sqlite3_reset (nonnull-statement-ptr stmt))      ; note: resetting cached statement will fail here
   (set-statement-reset! stmt)
   ;; Invalidate the column name cache, as schema can now change, and
   ;; we have no other way to detect such.  Another option is to invalidate

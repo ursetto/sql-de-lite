@@ -54,7 +54,7 @@
 
 (define (build/internal)
   (print "\n+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version\n")
-  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite
+  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite -j sql-de-lite-cache
            -Isqlite3 sqlite3/sqlite3.c
            ,@sqlite3-options)
   ;; Using Chicken to compile the shell may link to extraneous libraries,
@@ -70,14 +70,14 @@
 (define (build/external ver)
   (when ver
     (print "\n+++ SQLite3 version " ver " found\n"))
-  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite -lsqlite3)
+  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite -j sql-de-lite-cache -lsqlite3)
   (install-library))
 
 (define (install-library)
   (compile -s -O2 -d0 sql-de-lite.import.scm)
   (install-extension
    'sql-de-lite
-   `("sql-de-lite.so" "sql-de-lite.import.so")
+   `("sql-de-lite.so" "sql-de-lite.import.so" "sql-de-lite-cache.import.scm")
    `((version ,extension-version))))
 
 (define (install-shell)
