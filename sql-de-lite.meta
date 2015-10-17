@@ -4,6 +4,6 @@
  (category db)
  (license "BSD")
  (doc-from-wiki)
- (needs (lru-cache 0.5.3) foreigners)  ;; and bind 0.93
+ (needs foreigners)  ;; and bind 0.93
  (test-depends test)
- (files "sql-de-lite.release-info" "sql-de-lite.setup" "Makefile" "sqlite3-api.scm" "sqlite3-api.h" "sqlite3/shell.c" "sqlite3/sqlite3.h" "sqlite3/sqlite3.c" "sql-de-lite.meta" "version-check.scm" "sql-de-lite.scm" "tests/run.scm"))
+ (files "sql-de-lite.release-info" "sql-de-lite.setup" "Makefile" "sqlite3-api.scm" "sqlite3-api.h" "sqlite3/shell.c" "sqlite3/sqlite3.h" "sqlite3/sqlite3.c" "sql-de-lite.meta" "version-check.scm" "sql-de-lite.scm" "sql-de-lite-cache.scm" "tests/run.scm" "tests/cache.scm" "tests/stmt-repro.scm"))
