@@ -1,6 +1,7 @@
 (module sql-de-lite-cache
 
 (make-lru-cache
+ lru-cache?
  lru-cache-size
  lru-cache-capacity
  lru-cache-add!           ; adds a new k,v pair in MRU position
