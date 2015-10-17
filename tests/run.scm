@@ -1166,5 +1166,6 @@
 ;;     (reset *s1*)))    ;; reset should fail with finalized statement error
 
 (include "stmt-repro.scm")
+(include "cache.scm")
 
 (test-exit)

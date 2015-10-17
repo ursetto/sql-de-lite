@@ -3,12 +3,6 @@
 ;; Copyright (c) 2009 Jim Ursetto.  All rights reserved.
 ;; BSD license at end of file.
 
-;; FIXME: May need to store cached statements in a certain way that they can't be executed.  Otherwise we
-;; could finalize a statement, keep its handle, then run operations like step/fetch without resurrecting it first ---
-;;  then the cached statement will be running, violating the invariant that cached statements are inactive.  We either
-;;  need to zero out the handle in the SQL statement (meaning the cache has to store copies), or -- safer but slower --
-;;  all low-level operations would have to confirm the statement is not cached yet.
-
 ;;; Direct-to-C
 
 #>  #include <sqlite3.h> <#
@@ -21,8 +15,6 @@ int busy_notification_handler(void *ctx, int times) {
 <#
 
 ;;; Module definition
-
-(include "sql-de-lite-cache.scm")
 
 (module sql-de-lite
  (
@@ -87,7 +79,7 @@ int busy_notification_handler(void *ctx, int times) {
 (import (only data-structures alist-ref))
 (import (only srfi-18 thread-sleep! milliseconds->time))
 (import foreign foreigners)
-(import sql-de-lite-cache)
+(use sql-de-lite-cache)
 
 ;;; Foreign interface
 

@@ -12,7 +12,8 @@
 ;; Minimum SQLite version to accept when choosing whether to use external library.
 ;; There's also a minimum legal version that we can even use, but we just let the
 ;; linker error out if too old.
-(define +min-sqlite3-libversion+ 3008009)   ;; 3008009 is included with egg
+;; Note: we can't detect the patchlevel with this method.
+(define +min-sqlite3-libversion+ 3008009)   ;; 3008011 (3.8.11.2) is included with egg
 
 (define sqlite3-options
   '(-C -DSQLITE_ENABLE_FTS3
@@ -54,7 +55,9 @@
 
 (define (build/internal)
   (print "\n+++ SQLite3 version >= " +min-sqlite3-libversion+ " not found, using bundled version\n")
-  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite -j sql-de-lite-cache
+  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite
+           -emit-type-file sql-de-lite.types
+           -types sql-de-lite-cache.types           
            -Isqlite3 sqlite3/sqlite3.c
            ,@sqlite3-options)
   ;; Using Chicken to compile the shell may link to extraneous libraries,
@@ -70,14 +73,17 @@
 (define (build/external ver)
   (when ver
     (print "\n+++ SQLite3 version " ver " found\n"))
-  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -j sql-de-lite -j sql-de-lite-cache -lsqlite3)
+  (compile -s -O2 -d2 -inline -local sql-de-lite.scm -emit-type-file sql-de-lite.types
+           -types sql-de-lite-cache.types
+           -j sql-de-lite -lsqlite3)
   (install-library))
 
 (define (install-library)
-  (compile -s -O2 -d0 sql-de-lite.import.scm)
+  (compile -s -O2 -d0 sql-de-lite.import.scm)  
   (install-extension
    'sql-de-lite
-   `("sql-de-lite.so" "sql-de-lite.import.so" "sql-de-lite-cache.import.scm")
+   `("sql-de-lite.so" "sql-de-lite.import.so" "sql-de-lite-cache.so" "sql-de-lite-cache.import.so"
+     "sql-de-lite.types")
    `((version ,extension-version))))
 
 (define (install-shell)
@@ -87,6 +93,11 @@
    `((version ,extension-version))))
 
 ;;; Main logic
+
+(compile -s -O2 -d0 -inline -local sql-de-lite-cache.scm
+         -emit-type-file sql-de-lite-cache.types
+         -j sql-de-lite-cache)
+(compile -s -O2 -d0 sql-de-lite-cache.import.scm)
 
 (cond (force-internal-lib?
        (build/internal))
