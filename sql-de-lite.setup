@@ -13,7 +13,7 @@
 ;; There's also a minimum legal version that we can even use, but we just let the
 ;; linker error out if too old.
 ;; Note: we can't detect the patchlevel with this method.
-(define +min-sqlite3-libversion+ 3008009)   ;; 3008011 (3.8.11.2) is included with egg
+(define +min-sqlite3-libversion+ 3017000)   ;; 3017000 (3.17.0) is included with egg
 
 (define sqlite3-options
   '(-C -DSQLITE_ENABLE_FTS3
