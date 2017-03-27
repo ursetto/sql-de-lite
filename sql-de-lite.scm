@@ -77,7 +77,7 @@ int busy_notification_handler(void *ctx, int times) {
 (import (only lolevel
               object->pointer object-release object-evict pointer=?))
 (import (only data-structures alist-ref))
-(import (only srfi-18 thread-sleep! milliseconds->time))
+(import (only srfi-18 thread-sleep!))
 (import foreign foreigners)
 (use sql-de-lite-cache)
 
