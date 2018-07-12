@@ -608,8 +608,8 @@ int busy_notification_handler(void *ctx, int times) {
       (let ((rv (sqlite3_finalize
                  (statement-ptr stmt)))) ; don't use nonnull-statement-ptr, because that checks cached status
         (dprint 'rv rv)
-        (set-statement-ptr! stmt #f)
         (remove-active-statement! stmt)
+        (set-statement-ptr! stmt #f)
         (cond ((= rv status/abort)
                (database-error
                 (statement-db stmt) rv 'finalize))
