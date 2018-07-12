@@ -37,6 +37,7 @@ int busy_notification_handler(void *ctx, int times) {
   change-count total-change-count last-insert-rowid
   with-transaction with-deferred-transaction
   with-immediate-transaction with-exclusive-transaction
+  with-savepoint-transaction
   autocommit?
   rollback commit
 
@@ -959,22 +960,34 @@ int busy_notification_handler(void *ctx, int times) {
 (define with-transaction
   (let ((tsqls '((deferred . "begin deferred;")
                  (immediate . "begin immediate;")
-                 (exclusive . "begin exclusive;"))))
+                 (exclusive . "begin exclusive;")
+		 (savepoint . "savepoint 'sql-de-lite';"))))
     (lambda (db thunk #!optional (type 'deferred))
+      (define (rollback*)
+	(if (eq? type 'savepoint)
+	 (begin
+	   (exec (sql db "rollback to 'sql-de-lite';")) ; TODO: reset all the statements allocated since the savepoint was declared.
+	   (exec (sql db "release 'sql-de-lite';"))
+	   )
+	  (rollback db)))
+      (define (commit-or-release)
+	(if (eq? type 'savepoint)
+	  (exec (sql db "release 'sql-de-lite';"))
+	  (commit db)))
       (and (exec (sql db (or (alist-ref type tsqls)
                              (error 'with-transaction
                                     "invalid transaction type" type))))
            (let ((rv 
-                  (handle-exceptions ex (begin (or (rollback db)
+                  (handle-exceptions ex (begin (or (rollback*)
                                                    (error 'with-transaction
                                                           "rollback failed"))
                                                (abort ex))
                     (let ((rv (thunk))) ; only 1 return value allowed
                       (and rv
-                           (commit db)  ; maybe warn on #f
+                           (commit-or-release)  ; maybe warn on #f
                            rv)))))
-             (or rv
-                 (if (rollback db)
+	     (or rv
+                 (if (rollback*)
                      #f
                      (error 'with-transaction "rollback failed"))))))))
 
@@ -983,6 +996,8 @@ int busy_notification_handler(void *ctx, int times) {
   (with-transaction db thunk 'immediate))
 (define (with-exclusive-transaction db thunk)
   (with-transaction db thunk 'exclusive))
+(define (with-savepoint-transaction db thunk)
+  (with-transaction db thunk 'savepoint))
 
 (define (autocommit? db)
   (sqlite3_get_autocommit (nonnull-db-ptr db)))
