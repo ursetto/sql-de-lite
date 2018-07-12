@@ -1037,6 +1037,8 @@ int busy_notification_handler(void *ctx, int times) {
 			     (lambda (s)
 			       (dprint "resetting running query " s)
 			       (reset-unconditionally s))))
+  ; reset-unconditionally doesn't remove statements from the active list: that's done by finalize and friends.
+  ; Therefore, if there are statements from this transaction that are still active when we pop the transaction frame, what should we do with them?
 
 ;;; Busy handling
 
