@@ -70,16 +70,28 @@ int busy_notification_handler(void *ctx, int times) {
   register-aggregate-function!  
   )
 
-(import scheme
-        (except chicken reset))
-(import (only extras fprintf sprintf))
-(require-library lolevel srfi-18)
-(import (only lolevel
-              object->pointer object-release object-evict pointer=?))
-(import (only data-structures alist-ref))
-(import (only srfi-18 thread-sleep!))
-(import foreign foreigners)
-(use sql-de-lite-cache)
+(import scheme)
+
+(cond-expand
+  (chicken-4
+   (import (except chicken reset))
+   (import (only extras fprintf sprintf))
+   (require-library lolevel srfi-18)
+   (import (only lolevel
+                 object->pointer object-release object-evict pointer=?))
+   (import (only data-structures alist-ref))
+   (import (only srfi-18 thread-sleep!))
+   (import foreign foreigners)
+   (use sql-de-lite-cache))
+  (else (import (chicken base) (chicken keyword) (chicken blob))
+        (import (chicken condition) (chicken fixnum))
+        (import (only (chicken format) fprintf sprintf))
+        (import srfi-18)
+        (import (only (chicken memory)
+                      object->pointer pointer=?))
+        (import object-evict)
+        (import (chicken foreign) foreigners)
+        (import sql-de-lite-cache)))
 
 ;;; Foreign interface
 
@@ -178,7 +190,9 @@ int busy_notification_handler(void *ctx, int times) {
       (error 'sql-de-lite "operation on closed database")))
 
 ;; better implemented as a set or even plain list
-(use srfi-69)
+(cond-expand
+  (chicken-4 (use srfi-69))
+  (else (import srfi-69)))
 (define (make-active-statements)
   (make-hash-table))
 ;; as a convenience, derive the database from the statement.  forward reference.

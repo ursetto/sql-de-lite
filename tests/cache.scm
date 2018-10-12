@@ -1,5 +1,7 @@
 
-(use test sql-de-lite-cache)
+(cond-expand
+  (chicken-4 (use test sql-de-lite-cache))
+  (else (import test sql-de-lite-cache)))
 
 (test-group "cache"
             

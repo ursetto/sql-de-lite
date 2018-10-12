@@ -1,13 +1,18 @@
-(use test)
-(use sql-de-lite)
-(use files) ; create-temporary-file
-(use posix) ; delete-file
+(cond-expand
+  (chicken-4
+   (use test)
+   (use sql-de-lite)
+   (use files)                          ; create-temporary-file
+   (use posix))                         ; delete-file
+  (else
+   (import test sql-de-lite (chicken file) (chicken blob))))
 
 ;; Concatenate string literals into a single literal at compile time.
 ;; (string-literal "a" "b" "c") -> "abc"
 (define-syntax string-literal
-  (lambda (f r c)
-    (apply string-append (cdr f))))
+  (er-macro-transformer
+   (lambda (f r c)
+     (apply string-append (cdr f)))))
 (define-syntax begin0                 ; multiple values discarded
   (syntax-rules () ((_ e0 e1 ...)
                     (let ((tmp e0)) e1 ... tmp))))

@@ -1,0 +1,26 @@
+#!/bin/sh
+
+set -e
+
+# Minimum SQLite version to accept when choosing whether to use
+# external library.  There's also a minimum legal version that we can
+# even use, but we just let the linker error out if too old.  Note: we
+# can't detect the patchlevel with this method.
+# Version 3017000 (3.17.0) is included with egg, so it must be newer.
+min_sqlite3_libversion=3017000
+
+if [ ! -x version-check ]; then
+   "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS -lsqlite3" "version-check.scm" >/dev/null 2>/dev/null
+fi
+
+if [ -x version-check ]; then
+  current_sqlite3_libversion=`./version-check`
+  if [ $current_sqlite3_libversion -ge $min_sqlite3_libversion ]; then
+      exit 1
+  fi
+fi
+
+# Do not remove across runs for efficiency
+#rm -f version-check
+
+exit 0

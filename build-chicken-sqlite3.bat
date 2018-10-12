@@ -1,0 +1,6 @@
+@echo off
+
+SET SQLITE3_OPTIONS=-C -DSQLITE_ENABLE_FTS3 -C -DSQLITE_ENABLE_FTS3_PARENTHESIS -C -DSQLITE_THREADSAFE=0
+
+REM For now we just always build with the shipped sqlite3 version.
+%CHICKEN_CSC% -C %CFLAGS% -L %LDFLAGS% -Isqlite3 %* sqlite3/sqlite3.c %SQLITE3_OPTIONS% -C -DSQLITE_THREADSAFE=0

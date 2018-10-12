@@ -19,7 +19,10 @@
 ;  5) With a cache that is too small to simultaneously accomodate all the
 ;     concurrently running statements.
 
-(use sql-de-lite test)
+(cond-expand
+  (chicken-4
+   (use sql-de-lite test))
+  (else (import sql-de-lite test)))
 
 
 ; Helpers

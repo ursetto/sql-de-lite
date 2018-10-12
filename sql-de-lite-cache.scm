@@ -9,7 +9,11 @@
  lru-cache-flush!
  lru-cache-walk)
 
-(import scheme chicken)
+(import scheme)
+
+(cond-expand
+  (chicken-4 (import chicken))
+  (else (import (chicken base))))
 
 (define-record-type lru-cache
   (%make-lru-cache  head tail capacity comparator deleter size)
