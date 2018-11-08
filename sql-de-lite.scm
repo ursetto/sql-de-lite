@@ -1008,19 +1008,20 @@ int busy_notification_handler(void *ctx, int times) {
 	   (begin
 	     (set-db-active-statements! db (cons (make-active-statements) (db-active-statements db)))
 	     #t)
-           (let ((rv 
+           (let ((rvs
                   (handle-exceptions ex (begin (or (rollback*)
                                                    (error 'with-transaction
                                                           "rollback failed"))
                                                (abort ex))
-                    (let ((rv (thunk))) ; only 1 return value allowed
-                      (and rv
-                           (commit-or-release)  ; maybe warn on #f
-                           rv)))))
-	     (or rv
-                 (if (rollback*)
-                     #f
-                     (error 'with-transaction "rollback failed"))))))))
+                    (let ((rvs (receive (thunk))))
+		      (if (car rvs)
+			(commit-or-release))  ; maybe warn on #f
+		      rvs))))
+	     (if (car rvs)
+	       (apply values rvs)
+	       (if (rollback*)
+		 (apply values rvs)
+		 (error 'with-transaction "rollback failed"))))))))
 
 (define with-deferred-transaction with-transaction) ; convenience fxns
 (define (with-immediate-transaction db thunk)
