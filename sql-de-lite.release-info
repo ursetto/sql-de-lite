@@ -18,6 +18,7 @@
 (release "0.6.6")
 (release "0.7.0")
 (release "0.7.1")
+(release "0.7.2")
 
 ;; Old SVN repository.
 ;;(repo svn "http://anonymous:@code.call-cc.org/svn/chicken-eggs/release/4/{egg-name}")
