@@ -1,5 +1,6 @@
 *.so
 *.import.scm
 *.types
+*~
 
 version-check
