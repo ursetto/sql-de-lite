@@ -964,28 +964,27 @@ int busy_notification_handler(void *ctx, int times) {
   (let ((tsqls '((deferred . "begin deferred;")
                  (immediate . "begin immediate;")
                  (exclusive . "begin exclusive;")
-		 (savepoint . "savepoint 'sql-de-lite';"))))
+                 (savepoint . "savepoint 'sql-de-lite';"))))
     (lambda (db thunk #!optional (type 'deferred))
       (define (rollback*)
-	(if (eq? type 'savepoint)
-	 (begin
-	   (reset-running-queries! db)
-	   (set-db-active-statements! db (cdr (db-active-statements db)))
-	   (exec (sql db "rollback to 'sql-de-lite';")) ; TODO: reset all the statements allocated since the savepoint was declared.
-	   (exec (sql db "release 'sql-de-lite';"))
-	   )
-	  (rollback db)))
+        (if (eq? type 'savepoint)
+         (begin
+           (reset-running-queries! db)
+           (set-db-active-statements! db (cdr (db-active-statements db)))
+           (exec (sql db "rollback to 'sql-de-lite';")) ; TODO: reset all the statements allocated since the savepoint was declared.
+           (exec (sql db "release 'sql-de-lite';")))
+          (rollback db)))
       (define (commit-or-release)
-	(set-db-active-statements! db (cdr (db-active-statements db)))
-	(if (eq? type 'savepoint)
-	  (exec (sql db "release 'sql-de-lite';"))
-	  (commit db)))
+        (set-db-active-statements! db (cdr (db-active-statements db)))
+        (if (eq? type 'savepoint)
+          (exec (sql db "release 'sql-de-lite';"))
+          (commit db)))
       (and (exec (sql db (or (alist-ref type tsqls)
                              (error 'with-transaction
                                     "invalid transaction type" type))))
-	   (begin
-	     (set-db-active-statements! db (cons (make-active-statements) (db-active-statements db)))
-	     #t)
+           (begin
+             (set-db-active-statements! db (cons (make-active-statements) (db-active-statements db)))
+             #t)
            (let ((rv 
                   (handle-exceptions ex (begin (or (rollback*)
                                                    (error 'with-transaction
@@ -995,7 +994,7 @@ int busy_notification_handler(void *ctx, int times) {
                       (and rv
                            (commit-or-release)  ; maybe warn on #f
                            rv)))))
-	     (or rv
+             (or rv
                  (if (rollback*)
                      #f
                      (error 'with-transaction "rollback failed"))))))))
@@ -1020,7 +1019,7 @@ int busy_notification_handler(void *ctx, int times) {
   (cond ((autocommit? db) #t)
         (else
          (reset-running-queries! db)
-	 (set-db-active-statements! db (cdr (db-active-statements db)))
+         (set-db-active-statements! db (cdr (db-active-statements db)))
          (exec (sql db "rollback;")))))
 ;; Commit current transaction.  This does not roll back running queries,
 ;; because running read queries are acceptable, and the behavior in the
@@ -1034,11 +1033,13 @@ int busy_notification_handler(void *ctx, int times) {
 ;; Forcibly reset all running queries (tracked in the active statement list).
 (define (reset-running-queries! db)
   (for-each-active-statement db
-			     (lambda (s)
-			       (dprint "resetting running query " s)
-			       (reset-unconditionally s))))
-  ; reset-unconditionally doesn't remove statements from the active list: that's done by finalize and friends.
-  ; Therefore, if there are statements from this transaction that are still active when we pop the transaction frame, what should we do with them?
+                             (lambda (s)
+                               (dprint "resetting running query " s)
+                               (reset-unconditionally s))))
+;; reset-unconditionally doesn't remove statements from the active list:
+;; that's done by finalize and friends.
+;; FIXME: if there are statements from a savepoint transaction that are
+;; still active when we pop the transaction frame, what should we do with them?
 
 ;;; Busy handling
 
