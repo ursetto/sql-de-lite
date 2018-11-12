@@ -5,10 +5,11 @@ set -e
 # If threadsafe=1, pthreads is required, so let's not.
 sqlite3_options="-C -DSQLITE_ENABLE_FTS3 -C -DSQLITE_ENABLE_FTS3_PARENTHESIS -C -DSQLITE_THREADSAFE=0"
 
-if ./use-internal-sqlite3; then
-    "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS" "$@" \
-		   -Isqlite3 sqlite3/sqlite3.c $sqlite3_options
-else
+if /bin/sh ./use-system-sqlite3; then
     echo "SQlite3 version `./version-check` found"
     "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS -lsqlite3" "$@"
+else
+    echo "Using built-in SQLite3"
+    "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS" "$@" \
+		   -Isqlite3 sqlite3/sqlite3.c $sqlite3_options
 fi

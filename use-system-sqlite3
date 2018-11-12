@@ -16,11 +16,11 @@ fi
 if [ -x version-check ]; then
   current_sqlite3_libversion=`./version-check`
   if [ $current_sqlite3_libversion -ge $min_sqlite3_libversion ]; then
-      exit 1
+      exit 0
   fi
 fi
 
 # Do not remove across runs for efficiency
 #rm -f version-check
 
-exit 0
+exit 1

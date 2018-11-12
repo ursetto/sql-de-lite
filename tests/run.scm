@@ -5,7 +5,8 @@
    (use files)                          ; create-temporary-file
    (use posix))                         ; delete-file
   (else
-   (import test sql-de-lite (chicken file) (chicken blob))))
+   (import test sql-de-lite (chicken file) (chicken blob)
+           (chicken string) (chicken format))))
 
 ;; Concatenate string literals into a single literal at compile time.
 ;; (string-literal "a" "b" "c") -> "abc"
