@@ -2,5 +2,10 @@
 *.import.scm
 *.types
 *~
+*.build.sh
+*.install.sh
+*.o
+*.link
 
 version-check
+chicken-sqlite3

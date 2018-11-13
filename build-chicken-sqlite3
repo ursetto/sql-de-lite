@@ -6,7 +6,7 @@ sqlite3_options="-C -DSQLITE_ENABLE_FTS3 -C -DSQLITE_ENABLE_FTS3_PARENTHESIS -C 
 
 if ./use-system-sqlite3; then
     echo "SQlite3 version `./version-check` found"
-    "$CHICKEN_CSC" -C "$CFLAGS -DUSE_SYSTEM_SQLITE=1" -L "$LDFLAGS -lsqlite3" -Isqlite3 "$@"
+    cp chicken-sqlite3.sh chicken-sqlite3
 else
     echo "Using built-in SQLite3"
     "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS" \
