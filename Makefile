@@ -6,3 +6,6 @@ all: sqlite3-api.scm
 
 sqlite3-api.scm: sqlite3-api.h
 	chicken-bind $<
+
+clean:
+	rm *.so *.o
