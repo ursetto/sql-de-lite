@@ -37,6 +37,7 @@ int busy_notification_handler(void *ctx, int times) {
   change-count total-change-count last-insert-rowid
   with-transaction with-deferred-transaction
   with-immediate-transaction with-exclusive-transaction
+  with-savepoint-transaction
   autocommit?
   rollback commit
 
@@ -976,8 +977,31 @@ int busy_notification_handler(void *ctx, int times) {
 (define with-transaction
   (let ((tsqls '((deferred . "begin deferred;")
                  (immediate . "begin immediate;")
-                 (exclusive . "begin exclusive;"))))
+                 (exclusive . "begin exclusive;")
+		 (savepoint . "savepoint 'sql-de-lite';"))))
     (lambda (db thunk #!optional (type 'deferred))
+      (define (rollback*)
+	(if (eq? type 'savepoint)
+	 (begin
+	   (reset-running-queries! db)
+	   (exec (sql db "rollback to 'sql-de-lite';"))
+	   (if (< (length (db-active-statements db)) 2)
+	     (error 'with-transaction "internal error: at least one transaction frame is missing.")
+	     (begin
+	      (hash-table-merge! (second (db-active-statements db)) (first (db-active-statements db)))
+	      (set-db-active-statements! db (cdr (db-active-statements db)))))
+	   (exec (sql db "release 'sql-de-lite';")))
+	 (rollback db)))
+      (define (commit-or-release)
+	(if (eq? type 'savepoint)
+	  (if (< (length (db-active-statements db)) 2)
+	    (error 'with-transaction "internal error: at least one transaction frame is missing.")
+	    (begin
+	      ; Don't reset anything; just move all the queries to the next frame up.
+	      (hash-table-merge! (second (db-active-statements db)) (first (db-active-statements db)))
+	      (set-db-active-statements! db (cdr (db-active-statements db)))
+	      (exec (sql db "release 'sql-de-lite';"))))
+	  (commit db)))
       (and (exec (sql db (or (alist-ref type tsqls)
                              (error 'with-transaction
                                     "invalid transaction type" type))))
@@ -985,16 +1009,16 @@ int busy_notification_handler(void *ctx, int times) {
 	     (set-db-active-statements! db (cons (make-active-statements) (db-active-statements db)))
 	     #t)
            (let ((rv 
-                  (handle-exceptions ex (begin (or (rollback db)
+                  (handle-exceptions ex (begin (or (rollback*)
                                                    (error 'with-transaction
                                                           "rollback failed"))
                                                (abort ex))
                     (let ((rv (thunk))) ; only 1 return value allowed
                       (and rv
-                           (commit db)  ; maybe warn on #f
+                           (commit-or-release)  ; maybe warn on #f
                            rv)))))
-             (or rv
-                 (if (rollback db)
+	     (or rv
+                 (if (rollback*)
                      #f
                      (error 'with-transaction "rollback failed"))))))))
 
@@ -1003,6 +1027,8 @@ int busy_notification_handler(void *ctx, int times) {
   (with-transaction db thunk 'immediate))
 (define (with-exclusive-transaction db thunk)
   (with-transaction db thunk 'exclusive))
+(define (with-savepoint-transaction db thunk)
+  (with-transaction db thunk 'savepoint))
 
 (define (autocommit? db)
   (sqlite3_get_autocommit (nonnull-db-ptr db)))
