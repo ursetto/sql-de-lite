@@ -2,6 +2,11 @@
 
 set -e
 
+# terrible workaround for passing the correct options to the manual
+# compile of sqlite3/sqlite3.c:
+static=`$CHICKEN_CSI -s fixup.scm -s "$@"`
+opts=`$CHICKEN_CSI -s fixup.scm -o sql-de-lite.scm "$@"`
+
 # If threadsafe=1, pthreads is required, so let's not.
 sqlite3_options="-C -DSQLITE_ENABLE_FTS3 -C -DSQLITE_ENABLE_FTS3_PARENTHESIS -C -DSQLITE_THREADSAFE=0"
 
@@ -10,6 +15,11 @@ if /bin/sh ./use-system-sqlite3; then
     "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS -lsqlite3" "$@"
 else
     echo "Using built-in SQLite3"
+    if ! test -f sqlite3/sqlite3$static.o; then
+        "$CHICKEN_CSC" $opts -C "$CFLAGS" -L "$LDFLAGS" \
+    		   -c -Isqlite3 sqlite3/sqlite3.c $sqlite3_options \
+                                      -o sqlite3/sqlite3$static.o
+    fi
     "$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS" "$@" \
-		   -Isqlite3 sqlite3/sqlite3.c $sqlite3_options
+		   -Isqlite3 sqlite3/sqlite3$static.o $sqlite3_options
 fi
