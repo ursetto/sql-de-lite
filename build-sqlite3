@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -e
+
+rm -f sql3wrap.c sqlite3.h sqlite3ext.h
+
+if /bin/sh ./use-system-sqlite3; then
+    echo "SQlite3 version `./version-check` found"
+    rm -f sql3wrap.c
+    touch sql3wrap.c
+    sqlite3_options=
+else
+    echo "Using built-in SQLite3"
+    ln -s sqlite3/sqlite3.c sql3wrap.c
+    ln -s sqlite3/sqlite3.h .
+    ln -s sqlite3/sqlite3ext.h .
+    # If threadsafe=1, pthreads is required, so let's not.
+    sqlite3_options="-C -DSQLITE_ENABLE_FTS3 -C -DSQLITE_ENABLE_FTS3_PARENTHESIS -C -DSQLITE_THREADSAFE=0"
+fi
+"$CHICKEN_CSC" -C "$CFLAGS" -L "$LDFLAGS" "$@" \
+    $sqlite3_options
