@@ -8,24 +8,33 @@
  (test-dependencies test)
  (version "0.8.0")
  (components (extension sql-de-lite
-                        (custom-build "build-sql-de-lite")
                         (types-file)
+                        (cond-expand
+                            ((and (not windows) (not use-system-sqlite))
+                             (objects sqlite3)
+                             (csc-options -C -Isqlite3))
+                            (else
+                             (link-options -L -lsqlite3)))
                         (csc-options -O2 -d2 -inline -local
                                      -types sql-de-lite-cache.types)
                         (component-dependencies sql-de-lite-cache)
-                        ;; Only if building with shipped sqlite3.c,
-                        ;; but we can't make that check here.
-                        (source-dependencies "sqlite3/sqlite3.c"
-                                             "sqlite3/sqlite3.h"
-                                             "sqlite3/sqlite3ext.h"))
+                        (source-dependencies "sqlite3-api.scm"))
              (extension sql-de-lite-cache
                         (types-file)
                         (csc-options -O2 -d0 -inline -local))
+             (cond-expand
+                 ((and (not windows) (not use-system-sqlite))
+                  (c-object sqlite3 
+                     (source "sqlite3/sqlite3.c")
+                     (source-dependencies "sqlite3/sqlite3.h"
+                                          "sqlite3/sqlite3ext.h")
+                     (csc-options -C -Isqlite3)))
+                 (else))
              (program chicken-sqlite3
-                      (custom-build "build-chicken-sqlite3")
-                      (source "sqlite3/shell.c")
-                      ;; Only if building with shipped sqlite3.c,
-                      ;; but we can't make that check here.
-                      (source-dependencies "sqlite3/sqlite3.c"
-                                           "sqlite3/sqlite3.h"
-                                           "sqlite3/sqlite3ext.h"))))
+                      (cond-expand
+                          ((and (not windows) use-system-sqlite)
+                           (source "chicken-sqlite3.sh")
+                           (custom-build build-chicken-sqlite3))
+                          (else 
+                            (source "sqlite3/shell.c")
+                            (objects sqlite3))))))
