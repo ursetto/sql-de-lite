@@ -1,0 +1,889 @@
+== sql-de-lite
+
+'''sql-de-lite''' is an interface to SQLite 3 for CHICKEN.
+
+'''sql-de-lite''' has the following features:
+
+* Integrated SQLite3 library
+* Prepared statement cache
+* High-level and low-level API
+* User-defined scalar and aggregate functions
+* Focus on ensuring database is never accidentally left locked
+* Rollbacks and database close permitted even if statements are open
+
+[[toc:]]
+
+=== Installation
+
+Starting with '''sql-de-lite''' 0.4.0, the SQLite 3 library is
+included with the egg.  It will be automatically built if the system
+library is missing or too old; otherwise, the system library is used.
+You can also override the egg's choice of internal or external library.
+
+In most cases, the following will do the right thing:
+
+ chicken-install sql-de-lite
+
+The goal of this automatic detection is ensure that you can just
+depend on this extension without requiring a separate library install
+step from your users.
+
+==== Built-in library
+
+SQLite 3.17.0 is included in the egg and will be linked in statically
+if the system library is missing or older than 3.17.0.  The built-in
+library is compiled with FTS3 and FTS4 (full text search) enabled.
+
+Additionally, a copy of the SQLite3 command shell is installed
+with your Chicken binaries as {{chicken-sqlite3}}.
+
+To force the use of the built-in library, pass the {{sql-de-lite-internal-lib}}
+feature to {{chicken-install}}.
+
+ chicken-install -D sql-de-lite-internal-lib sql-de-lite
+
+==== External library
+
+A SQLite library installed in the default system library location will
+be used instead of the built-in library, if present and recent enough.
+
+To force the use of an external library, pass the {{sql-de-lite-external-lib}}
+feature to {{chicken-install}}.
+
+ chicken-install -D sql-de-lite-external-lib sql-de-lite
+
+If you force an external library to be used, the build will fail
+unless the library is present and recent enough not to cause link
+errors.  The extension assumes you know what you doing, and does
+not enforce a minimum library version.  It is probably necessary to
+use 3.6.x or later, and the latest stable is always recommended.
+
+==== Non-standard library location
+
+You can point the build process at a library in a non-standard
+location--for example, under your home directory--by setting
+{{CSC_OPTIONS}} appropriately.
+
+ export CSC_OPTIONS="-I$HOME/local/include -L$HOME/local/lib"
+ chicken-install sql-de-lite
+
+==== Your own built-in library, static
+
+If you want to use your own built-in library, retrieve the egg source,
+[[http://www.sqlite.org/download.html|download the SQLite
+amalgamation]] zip file or tarball, then extract it into
+{{sqlite3/}} inside the egg directory.
+
+ chicken-install -r sql-de-lite
+ cd sql-de-lite
+ curl -O http://www.sqlite.org/sqlite-amalgamation-3_7_0_1.zip
+ unzip sqlite-amalgamation-3_7_0_1.zip -d sqlite3
+ chicken-install          # build and install the egg
+
+All we really need is {{shell.c}}, {{sqlite3.c}}, and {{sqlite3.h}}
+from the amalgamation.  Autoconf is not used.
+
+Currently, there is no way to override the compilation options to
+SQLite3 from {{chicken-install}}.  If you need to do so, edit the
+{{sql-de-lite.setup}} file.
+
+=== Low-level interface
+
+The low-level interface maps closely to the underlying library API.  It may be used in tandem with or instead of the high-level API as desired.
+
+==== Opening the database
+
+<procedure>(open-database filename)</procedure>
+
+Opens {{filename}}, a sqlite3 database.  If no database exists, one is created transparently.  {{filename}} may also be one of the following symbols:
+
+* {{memory}}: a new database in memory unique to this connection
+* {{temp}} or {{temporary}}: a new temporary database on disk, visible only to this connection
+
+Returns a {{#<sqlite-database>}} object.
+
+==== Closing the database
+
+<procedure>(close-database db)</procedure>
+
+Closes the database connection {{db}}. All prepared statements are finalized
+before closing the database.
+
+'''Note.'''  Prior to 0.5.0, we did finalize transient statements as
+well, by walking the library's list of open statements before closing.
+Unfortunately, this included any statements prepared and owned by
+SQLite itself--for example, when using FTS--resulting in a double finalize
+and crash.
+
+'''Note.''' Prior to 0.7.0, transient (non-cached) statements had to be
+finalized manually before closing the database, typically with the query and
+exec high-level interface. Now all statements are finalized regardless of
+caching status.
+
+<procedure>(database-closed? db)</procedure>
+
+Predicate that checks if database {{db}} is closed.
+
+==== Preparing a SQL statement
+
+<procedure>(prepare db sql)</procedure>
+
+Looks up a prepared statement in the statement cache.  If not found,
+it prepares a new statement.  Returns a statement object.
+
+Preparing a SQL statement consisting entirely of whitespace or comment
+is an error as of 0.5.0.
+
+Returns a {{#<sqlite-statement>}} object.
+
+'''Note.''' Prior to 0.7.0, an exception was thrown if a statement 
+we pulled from cache is currently running. Statements are no longer
+cached while running.
+
+<procedure>(prepare-transient db sql)</procedure>
+
+Same as {{prepare}}, but bypasses the cache completely.  This
+procedure is subject to removal.
+
+<parameter>(prepared-cache-size n) [default: 100]</parameter>
+
+Sets the capacity of the prepared statement cache, in statements.
+
+When the cache reaches capacity and a new statement is prepared, the
+least recently used statement is finalized and drops off the cache.
+
+This setting takes effect only upon initiating a new connection, and
+the statement cache is unique per connection.
+
+Set capacity to 0 to disable the cache.
+
+==== Stepping the statement
+
+<procedure>(step statement)</procedure>
+
+Steps {{statement}} and returns one of the following:
+
+* {{'row}}: a row was returned ({{SQLITE_ROW}})
+* {{'done}}: the statement is done executing ({{SQLITE_DONE}})
+* {{#f}}: step failed due to error
+
+{{#f}} is only ever returned if raising exceptions is disabled.
+Completion of execution is still considered a "success" and so the
+true value {{'done}} is returned, rather than {{#f}}.
+
+Upon database error, the statement is reset.
+
+==== Resetting a statement
+
+<procedure>(reset statement)</procedure>
+
+Resets {{statement}} to the beginning of its program, returning the
+statement.
+
+==== Finalizing a statement
+
+<procedure>(finalize statement)</procedure>
+
+Finalize {{statement}}.  Usually, the statement is reset and added to the
+statement cache.  If the statement is transient, or cannot be cached for some
+reason, it is finalized immediately. 
+
+Finalizing a finalized statement, or a statement on a closed database, is a
+no-op.
+
+<procedure>(resurrect statement)</procedure>
+
+Resurrects a previously finalized statement {{s}} by pulling it from the cache,
+or if it was not cached, by re-preparing the original SQL associated with the
+statement.  
+
+Returns {{s}}, which is also modified in place.
+
+==== Binding parameters
+
+<procedure>(bind statement index value)</procedure>
+
+Bind parameter at {{index}} of {{statement}} to {{value}}, and returns
+{{statement}}.  The variable {{index}} may be an integer (the first
+parameter is 1, not 0) or a string for a named parameter --- for
+example, "$key", ":key" or "@key".  For named parameters, the {{$}},
+{{:}} or {{@}} must be included in the string.  A reference to an
+invalid index will throw an exception.
+
+<procedure>(bind-parameters statement . parameters)</procedure>
+
+Convenience function which binds {{parameters}} to indices 1 .. n, in
+order.  Keyword arguments are permitted; {{foo: 3}} will bind 3
+to parameter {{:foo}}.
+
+The number of parameters must match the statement's
+{{bind-parameter-count}}, or an error will be signaled.  Also, all
+keywords used must be valid parameter names.
+
+Mixing named and anonymous arguments in the same statement is not
+recommended.
+
+<procedure>(bind-parameter-count statement)</procedure>
+
+Returns the number of bound parameter slots in this prepared statement.  If numbered parameters are present, gaps may be left in the sequence.  Named parameters count in the slot total as well.
+
+<procedure>(bind-parameter-name statement i)</procedure>
+
+Returns a string representing the name of the bound parameter at index
+{{i}}, or {{#f}} if the parameter is anonymous or is out of range.
+
+The string includes the parameter name prefix; for example {{":foo"}},
+{{"$foo"}}, {{"@foo"}} or {{"?nnn"}}.
+
+==== Obtaining result data
+
+In this section's examples, we assume a simple database has been
+created with the following commands:
+
+ CREATE TABLE cache(key text, val text);
+ INSERT INTO cache(key,val) VALUES('foo', 'bar');
+ INSERT INTO cache(key,val) VALUES('baz', 'quux');
+
+and a SELECT statement has been prepared and stepped once:
+
+ (define s (prepare db "SELECT rowid, * from cache;"))
+ (step s)  ; => row
+
+and {{s}} is implicitly reset between examples.
+
+<procedure>(column-name statement index)</procedure>
+
+Return the name of the specified result set column as a symbol.  The statement need not have been stepped to retrieve column names or column count.
+
+ (column-name s 1)
+ ; => key
+
+<procedure>(column-names statement)</procedure>
+
+Convenience function which returns a list of all column names for the
+result set, in order.
+
+ (column-names s)
+ ; => (rowid key val)
+
+<procedure>(column-count statement)</procedure>
+
+Return the number of columns in the result set returned by the
+prepared statement.
+
+ (column-count s)
+ ; => 3
+
+<procedure>(column-type statement index)</procedure>
+
+Returns the type of the indexed column in the current row.  SQLite is dynamically typed and the column types are unique to each row.
+
+<table>
+<tr><th>Symbol</th><th>Database type</th></tr>
+<tr><td>integer</td><td>SQLITE_INTEGER</td></tr>
+<tr><td>float</td><td>SQLITE_FLOAT</td></tr>
+<tr><td>text</td><td>SQLITE_TEXT</td></tr>
+<tr><td>blob</td><td>SQLITE_BLOB</td></tr>
+<tr><td>null</td><td>SQLITE_NULL</td></tr>
+</table>
+
+ (map (lambda (i) (column-type s i))
+      (list 0 1 2))
+ ; => (integer text text)
+
+<procedure>(column-data statement index)</procedure>
+
+Returns the data from the indexed column in the current row.
+
+<table>
+<tr><th>Column type</th><th>Scheme type</th></tr>
+<tr><td>integer</td><td>Exact or inexact number</td></tr>
+<tr><td>float</td><td>Inexact number</td></tr>
+<tr><td>text</td><td>String</td></tr>
+<tr><td>blob</td><td>Blob</td></tr>
+<tr><td>null</td><td>'()</td></tr>
+</table>
+
+ (map (lambda (i) (column-data s i))
+      (list 0 1 2))
+ ; => (1 "foo" "bar")
+
+{{integer}} values are retrieved with {{sqlite3_column_int64}}.  On a
+32-bit machine, values outside the signed 31-bit fixnum range are
+returned as inexact numbers.  On a 64-bit machine, values outside the
+signed 63-bit fixnum range are returned as inexact numbers.  Note that
+inexact numbers are 64-bit floating point values, and can only accurately represent 53 bits of an integer.
+
+<procedure>(row-data statement)</procedure>
+
+Retrieve a list of column data from the current row.  If the last
+execution of {{step}} returned {{done}}, a NULL value will be returned
+for every column.
+
+ (row-data s)
+ ; => (1 "foo" "bar")
+
+<procedure>(row-alist statement)</procedure>
+
+Retrieve an alist mapping column names to column data for the current row.
+
+ (row-alist s)
+ ; => ((rowid . 1) (key . "foo") (val . "bar"))
+
+<procedure>(change-count db)</procedure>
+
+Returns the number of database rows that were changed or inserted or
+deleted by the most recently completed SQL statement, not including
+triggers, as in [[http://www.sqlite.org/capi3ref.html#sqlite3_changes|sqlite3_changes]].
+
+<procedure>(total-change-count db)</procedure>
+
+Returns the number of row changes caused by INSERT, UPDATE or DELETE
+statements since the database connection was opened, including
+triggers, as in [[http://www.sqlite.org/capi3ref.html#sqlite3_total_changes|sqlite3_total_changes]].
+
+<procedure>(last-insert-rowid db)</procedure>
+
+Get the ROWID of the last successful INSERT, as in [[http://www.sqlite.org/capi3ref.html#sqlite3_last_insert_rowid|sqlite3_last_insert_rowid]].
+
+=== High-level interface
+
+==== Opening and closing the database
+
+<procedure>(call-with-database filename proc)</procedure>
+
+Opens a database, calls {{proc}} with the database object and then closes the database on return.  If an error occurs in proc, the database is closed immediately.
+
+==== Statements
+
+<procedure>(sql db sql-str)</procedure>
+
+Creates a statement object associated with the database connection
+{{db}} and the SQL {{sql-str}}.  Preparation of the statement is
+deferred until needed.  This is a normal statement in every respect
+except that it must be {{resurrect}}ed before it can be used.
+
+{{sql}} is recommended over {{prepare}} when using the {{query}} /
+{{exec}} interface so that you can declare your statements without
+compiling them until and unless they are actually used.
+
+<procedure>(sql/transient db sql-str)</procedure>
+
+Equivalent to {{(sql db sql-str)}}, but the statement will never be
+cached; it is prepared anew every time it is resurrected.
+
+==== Query
+
+<procedure>(query proc s . args)</procedure>
+
+Resurrects statement {{s}}, binds {{args}} to {{s}} using
+{{bind-parameters}}, performs a {{query*}} and {{finalize}}s the
+statement.
+
+{{query}} is the usual way to perform a query unless you need to bind
+arguments manually, need more control or are using the low-level
+interface, in which case you can use {{query*}} if desired.
+
+You typically call {{query}} or {{query*}} with one of the provided
+result fetching procedures; you can also pass your own
+procedure to perform whichever operations you would like.
+
+<procedure>(query* proc s)</procedure>
+
+Calls {{(proc s)}} and resets the statement {{s}} immediately afterward, to
+avoid locking the database.  If an exception occurs during proc,
+the statement will still be reset.  The statement is not reset before
+execution.
+
+The entire purpose of {{query*}} is to ensure a statement is reset
+after it is executed.  If a statement were left in a running
+state --- for example, if an uncaught exception occurs during proc, or
+you simply do not exhaust its result set --- then the database will
+be locked for writing until the statement is finalized.
+
+===== Query procedures
+
+<procedure>(fetch s)</procedure>
+<procedure>(fetch-row s)</procedure>
+
+Fetch the next row of the result set.  This is the equivalent to
+performing a {{step}} followed by a {{row-data}} call, and works with
+both the high- and low-level interfaces.  If the statement has
+finished executing, fetch returns '().  These query procedures do not
+reset the statement before or afterward; one may do so using {{reset}}
+or {{query}}.
+
+{{fetch}} and {{fetch-row}} are aliases.
+
+ (fetch s)
+ ; => (1 "foo" "bar")
+ (fetch s)
+ ; => (2 "baz" "quux")
+ (fetch s)
+ ; => ()
+ (fetch s)
+ ; => error
+ (query fetch s)
+ ; => (1 "foo" "bar")
+ (query fetch s)
+ ; => (1 "foo" "bar")
+ (fetch s)
+ ; => (1 "foo" "bar")
+
+<procedure>(fetch-all s)</procedure>
+<procedure>(fetch-rows s)</procedure>
+
+Calls {{fetch}} until it returns {{'()}}, and collects the
+result into a list.  {{fetch-all}} and {{fetch-rows}} are
+aliases.
+
+ (query fetch-all s)
+ ; => ((1 "foo" "bar")
+       (2 "baz" "quux"))
+
+<procedure>(fetch-alist s)</procedure>
+
+Fetch the next row of the result set and return an alist
+mapping symbolic row names to values.  Equivalent to {{step}}
+followed by {{row-alist}}.
+
+ (query fetch-alist s)
+ ; ((rowid . 1) (key . "foo") (val . "bar"))
+
+<procedure>(fetch-alists s)</procedure>
+
+Fetches all rows and returns a list of alists, one per row.
+
+ (query fetch-alists s)
+ ; (((rowid . 1) (key . "foo") (val . "bar"))
+ ;  ((rowid . 2) (key . "baz") (val . "quux")))
+
+<procedure>(fetch-value s)</procedure>
+
+Fetches and returns only the first value (first column) of the next
+row, or {{#f}} if the row contained no column data.  Equivalent to
+using {{first-column}} on the result of a {{fetch}}, but does not
+materialize the entire row.
+
+ (query fetch-value
+        (sql db "select key from cache"))
+ ; => "foo"
+
+ (query fetch-value
+        (sql db "select key from cache where key=?") "nosuchkey")
+ ; => #f
+
+<procedure>(fetch-column s)</procedure>
+
+Fetches all rows and returns a list containing the first column
+of each, or {{'()}} if there was no column data.
+
+ (query fetch-column
+        (sql db "select key from cache"))
+ ; => ("foo" "bar")
+
+<procedure>(for-each-row proc)</procedure><br>
+<procedure>(for-each-row* proc)</procedure>
+
+Returns a procedure suitable for passing to {{query}}, taking one argument, a statement object.
+
+The procedure will call fetch once for each row and call your callback as {{(proc row)}}, discarding the results.
+
+ (query (for-each-row
+          (lambda (x) (print "row: " x)))
+        s)
+ ; row: (1 foo bar)
+ ; row: (2 baz quux)
+ ; => undefined
+
+{{for-each-row*}} behaves like {{for-each-row}}, but your callback is
+invoked with one argument for each column value.  For example, these
+produce equivalent results:
+
+ (query (for-each-row (match-lambda ((name sql)
+                         (print "table: " name " sql: " sql ";"))))
+        (sql db "select name, sql from sqlite_master;"))
+ (query (for-each-row* (lambda (name sql)
+                         (print "table: " name " sql: " sql ";")))
+        (sql db "select name, sql from sqlite_master;"))
+
+<procedure>(map-rows proc)</procedure><br>
+<procedure>(map-rows* proc)</procedure>
+
+Return a procedure suitable for passing to {{query}}, taking one argument, a statement object.
+
+The procedure will call fetch once for each row and call {{(proc row)}}, collecting the results into a list, in order.
+
+ (query (map-rows car) s)
+ ; => (1 2)
+
+Another example; these two produce equivalent results:
+
+ (query (map-rows car) (sql db "select name, sql from sqlite_master;"))
+ (map car (query fetch-all (sql db "select name, sql from sqlite_master;")))
+
+{{map-rows*}} behaves like {{map-rows}}, but your callback
+is invoked with one argument for each column value.
+
+<procedure>(fold-rows kons knil)</procedure><br>
+<procedure>(fold-rows* kons knil)</procedure><br>
+
+Calls {{(kons x xs)}} once for each row, where {{x}} is the current row data and {{xs}} is the seed (previous return value from {{kons}}).  The initial seed is {{knil}}.
+
+ (query (fold-rows cons '()) s)
+ ; => ((2 "baz" "quux") (1 "foo" "bar"))
+
+ ;; sum the returned rowids
+ (query (fold-rows (lambda (x xs) (+ (car x) xs))
+                   0)
+        s)
+ ; => 3
+
+ ;; that was contrived, you should actually do the sum in the database
+ (car (query fetch (sql db "select sum(rowid) from mytable;")))
+ ; => 3
+
+{{fold-rows*}} behaves like {{fold-rows}}, but the {{kons}} callback is invoked
+with one column for each argument value, plus the seed as the last argument --
+for example, as {{(kons x y z seed)}}.  This turns out to be quite inefficient
+and makes little sense, so {{fold-rows*}} is deprecated as of 0.4.2.
+
+<procedure>(first-column row)</procedure>
+
+Returns the first column of {{row}}, or {{#f}} if the row is '().
+
+ (first-column (query fetch (sql db "select sum(rowid) from mytable;")))
+ ; => 3
+
+You can also use {{fetch-value}} here instead:
+
+ (query fetch-value (sql db "select sum(rowid) from mytable;"))
+ ; => 3
+
+==== Execute
+
+<procedure>(exec s . args)</procedure>
+
+Resurrects statement {{s}}, binds {{args}} to {{s}} using
+{{bind-parameters}}, performs an {{exec*}}, and {{finalize}}s the
+statement.
+
+<procedure>(exec* s)</procedure>
+
+Executes statement {{sql}}, returning the number of changes (if the
+result set has no columns as in {{INSERT}}, {{DELETE}}, {{UPDATE}}) or the first
+row (if column data is returned as in {{SELECT}}).  In the latter
+case, it is like performing a (query* fetch s), but is more efficient.
+
+Resurrection is omitted, as it would wipe out any bindings.  Reset is
+NOT done beforehand; it is cheap, but the user must reset before a
+bind anyway.
+
+The statement is always reset afterward, even if an exception occurs,
+to avoid locking the database.  Note however that an internal error
+when retrieving column data (such as a string > 16MB) will leave the
+statement open -- this is a flaw in the current implementation.
+
+ (exec (sql db "INSERT INTO cache(key, val) values(?, ?);")
+       "chicken" 4)
+ ; => 1
+ (exec (sql db "SELECT * FROM cache WHERE key = ?;")
+       "chicken")
+ ; => ("chicken" "4")
+ (first-column (exec (sql db "SELECT val FROM cache;")))
+ ; => "bar"
+ (first-column (exec (sql db "SELECT val FROM cache;")))
+ ; => "bar"
+
+=== Transactions
+
+<procedure>(with-transaction db thunk #!optional (type 'deferred))</procedure><br>
+<procedure>(with-deferred-transaction db thunk)</procedure><br>
+<procedure>(with-immediate-transaction db thunk)</procedure><br>
+<procedure>(with-exclusive-transaction db thunk)</procedure>
+
+Executes {{thunk}} within a {{BEGIN TRANSACTION}} block, and returns
+the value of {{thunk}}.  The optional {{type}} may be one of the symbols
+{{deferred}}, {{immediate}}, or {{exclusive}}.  You may also use the
+named convenience functions instead of the optional parameter.
+
+The transaction is committed with {{(commit db)}} if {{thunk}} returns a true
+value.  Escaping or re-entering the dynamic extent of {{thunk}} will not commit
+or rollback the in-progress transaction.  However, if an exception occurs
+during {{thunk}}, or {{thunk}} returns {{#f}}, or the commit fails, the
+transaction will be rolled back with {{(rollback db)}}.  If this rollback
+fails, that is a critical error and you should likely abort.
+
+<procedure>(rollback db)</procedure>
+
+Rollback current transaction.  Unconditionally resets running queries
+before doing so, as rollback would fail if read or read/write queries
+are running.  Successful rollback returns a true value.  Rolling back
+in autocommit mode also returns a true value.
+
+<procedure>(commit db)</procedure>
+
+Commit current transaction.  This does not rollback running queries,
+because running read queries are acceptable, and the behavior in the
+presence of pending write statements is unclear.  If the commit
+fails, you can always rollback, which will reset the pending queries.
+
+Successful commit, or commit in autocommit mode, returns a true value.
+
+<procedure>(autocommit? db)</procedure>
+
+Returns {{#t}} if the database is in autocommit mode, or {{#f}} if within a transaction.
+
+=== Error handling
+
+When a database error occurs, an exception of type {{(exn sqlite)}} is raised, containing
+the database error code and message.  This information is also available from the
+database using the {{error-code}} and {{error-message}} interface.
+
+<procedure>(sqlite-exception? e)</procedure>
+
+Is {{e}} an exception raised by the database?
+
+<procedure>(sqlite-exception-status e)</procedure>
+
+Get the database error code as a symbol.  See {{error-code}} for details.
+
+<procedure>(sqlite-exception-message e)</procedure>
+
+Get the database error message as a string.
+
+<procedure>(error-code db)</procedure>
+
+Returns the last database error code as a symbol.
+
+<table>
+<tr><th>Symbol            </th><th>C error code</th></tr>
+<tr><td>ok                </td><td>SQLITE_OK</td></tr>
+<tr><td>error          </td><td>SQLITE_ERROR</td></tr>
+<tr><td>internal    </td><td>SQLITE_INTERNAL</td></tr>
+<tr><td>permission	    </td><td>SQLITE_PERM</td></tr>
+<tr><td>abort          </td><td>SQLITE_ABORT</td></tr>
+<tr><td>busy            </td><td>SQLITE_BUSY</td></tr>
+<tr><td>locked        </td><td>SQLITE_LOCKED</td></tr>
+<tr><td>no-memory  </td><td>SQLITE_NOMEM</td></tr>
+<tr><td>read-only  </td><td>SQLITE_READONLY</td></tr>
+<tr><td>interrupt  </td><td>SQLITE_INTERRUPT</td></tr>
+<tr><td>io-error    </td><td>SQLITE_IOERR</td></tr>
+<tr><td>corrupt      </td><td>SQLITE_CORRUPT</td></tr>
+<tr><td>not-found  </td><td>SQLITE_NOTFOUND</td></tr>
+<tr><td>full            </td><td>SQLITE_FULL</td></tr>
+<tr><td>cant-open  </td><td>SQLITE_CANTOPEN</td></tr>
+<tr><td>protocol    </td><td>SQLITE_PROTOCOL</td></tr>
+<tr><td>empty          </td><td>SQLITE_EMPTY</td></tr>
+<tr><td>schema        </td><td>SQLITE_SCHEMA</td></tr>
+<tr><td>too-big      </td><td>SQLITE_TOOBIG</td></tr>
+<tr><td>constraint   </td><td>SQLITE_CONSTRAINT</td></tr>
+<tr><td>mismatch    </td><td>SQLITE_MISMATCH</td></tr>
+<tr><td>misuse        </td><td>SQLITE_MISUSE</td></tr>
+<tr><td>no-lfs        </td><td>SQLITE_NOLFS</td></tr>
+<tr><td>authorization	 </td><td>SQLITE_AUTH</td></tr>
+<tr><td>format        </td><td>SQLITE_FORMAT</td></tr>
+<tr><td>range          </td><td>SQLITE_RANGE</td></tr>
+<tr><td>not-a-database	</td><td>SQLITE_NOTADB</td></tr>
+<tr><td>row              </td><td>SQLITE_ROW</td></tr>
+<tr><td>done            </td><td>SQLITE_DONE</td></tr>
+</table>
+
+<procedure>(error-message db)</procedure>
+
+Returns the last database error message as a string.
+
+<parameter>(raise-database-errors BOOLEAN) [default: #t]</parameter>
+
+Set to {{#t}} to raise an exception on database error, {{#f}} to return a false value.  Note that certain critical errors, such as "misuse of interface" and arity mismatches of bound parameters will raise exceptions regardless.  Procedures in this extension that utilize the low-level interface are written to work correctly with both {{#f}} return values and errors.
+
+Disabling raising of database errors is intended for experts and this option may be removed.
+
+=== Busy handling
+
+Busy handling is done outside of the library, instead of inside the
+library busy handler, because with SRFI-18 threads it is not legal to
+yield within a callback.  The backoff algorithm of
+sqlite3_busy_timeout is reimplemented.
+
+SQLite can deadlock in certain situations and to avoid this will
+return SQLITE_BUSY immediately rather than invoking the busy handler.
+However if there is no busy handler, we cannot tell a retryable
+SQLITE_BUSY from a deadlock one.  To gain deadlock protection we
+register a simple busy handler which sets a flag indicating this BUSY
+is retryable.  This is done without invoking a callback into Scheme.
+
+<procedure>(set-busy-handler! db proc)</procedure>
+
+Register the busy handler {{proc}} on the open connection {{db}};
+the handler will be called repeatedly when a {{prepare}} or {{step}}
+operation returns SQLITE_BUSY.  It is passed the two arguments {{(db
+count)}}, which are the associated database connection and the number
+of times this busy handler has been invoked so far for this operation.
+The procedure should return {{#f}} to stop retrying and have the
+operation return a BUSY error to the caller, or {{#t}} if the busy
+operation should be retried.
+
+By default, no busy handler is registered.  Busy handlers are unique
+to each connection and must be registered after the connection is
+open.
+
+ (call-with-database
+  (lambda (db)
+   (set-busy-handler! db (busy-timeout 10000)) ; 10 second timeout
+   ...))
+
+<procedure>(busy-timeout ms)</procedure>
+
+Return a procedure suitable for use in set-busy-handler!, implementing
+a spinning busy timeout using the SQLite3 busy wait algorithm.  This
+handler will wait up to {{ms}} milliseconds total before giving up.
+Other threads may be scheduled while this one is busy-waiting.
+
+=== User-defined functions
+
+You may define your own scalar and aggregate functions in Scheme.
+
+Currently, a significant performance penalty is imposed on all calls
+to {{step}} once the first user-defined function is registered, due to
+a limitation on callbacks in Chicken.  This penalty is on the order of
+10 times, and is imposed on all statements regardless of whether a
+user function is actually invoked.  However, if no functions are
+registered, there is no penalty.
+
+<procedure>(register-scalar-function! db name nargs proc)</procedure>
+
+Register a user-defined scalar function {{name}} of arity {{nargs}}.
+{{nargs}} may range from 0 to 127, or -1 to define a function taking any
+number of arguments.  You may define multiple functions with differing
+numbers of arguments.  Defining a function with the same {{nargs}} as
+an existing function will redefine it, even built-in functions.
+
+{{proc}} should be a function taking {{nargs}} arguments; to delete an
+existing function, set proc to {{#f}}.  The return value is used as
+the value of the scalar function.  If an error occurs during the
+function, it is signaled as a database error.
+
+Functions must be defined anew for every database connection.
+
+Be very careful when combining [[#Callbacks and SRFI-18|user-defined functions and SRFI-18 threads]].
+
+<procedure>(register-aggregate-function! db name nargs pstep #!optional (seed 0) (pfinal identity))</procedure>
+
+Register a user-defined aggregate function {{name}} of arity {{nargs}}.
+{{nargs}} may range from 0 to 127, or -1 to define a function taking any
+number of arguments.  You may define multiple functions with differing
+numbers of arguments.  Defining a function with the same {{nargs}} as
+an existing function will redefine it, even built-in functions.
+
+{{seed}} is the initial seed passed to this particular invocation of
+the aggregate function.  At every step, {{pstep}} is invoked as
+{{(pstep seed arg1 ... argn)}} and its return value becomes the next
+seed.  Finally, {{(pfinal seed)}} is invoked to do any final
+transformation necessary on the seed.  (For example, if {{seed}} is a record,
+you may need to pull out and return the relevant data.)  The return
+value of {{pfinal}} is used as the value of the aggregate function.
+If an error occurs during {{pstep}} or {{pfinal}}, it is signaled as
+a database error.
+
+{{pstep}} should be a function taking {{nargs}} arguments.  To delete
+an existing aggregate function, set pstep to {{#f}}.  In this case the
+values of {{seed}} and {{pfinal}} are ignored.
+
+Functions must be defined anew for every database connection.
+
+Be very careful when combining [[#Callbacks and SRFI-18|user-defined functions and SRFI-18 threads]].
+
+==== Callbacks and SRFI-18
+
+'''Warning.''' Callbacks are inherently unsafe
+in combination with SRFI-18 threads; callbacks must always be exited
+in the order they were entered, which can be violated with
+thread-switching or {{call/cc}}.  {{sql-de-lite}} takes care to
+disable thread scheduling inside user-defined function callbacks.
+It also traps and safely signals errors via the library.
+
+However, you ''must not'':
+
+* invoke {{call/cc}} to escape the user-defined function
+* invoke {{thread-yield!}} or {{thread-sleep!}}
+* perform blocking I/O (for example, writing to a file or network port)
+
+unless you are a wizard, or can guarantee no other thread can ever invoke
+a callback (even one created with another egg).
+
+User-defined functions have not been heavily stress-tested in the presence
+of multiple threads, so caution is advised.
+
+=== Miscellaneous
+
+<procedure>(schema db)</procedure>
+
+Returns a list of SQL statements making up the database schema.
+
+<procedure>(print-schema db)</procedure>
+
+Displays the database schema to the current output port; the result is similar to using {{.schema}} at the {{sqlite3}} command prompt.
+
+<procedure>(flush-cache! db)</procedure>
+
+Flush the prepared statement cache. All cached statements will be finalized (in the
+underlying library sense).
+
+<procedure>(finalized? statement)</procedure>
+
+Returns {{#t}} if the statement is finalized or has never been prepared.
+
+ (finalized? (sql db "select 1;"))     ; => #t
+ (finalized? (prepare db "select 1;")) ; => #f
+
+<string>library-version</string>
+
+A string representing the SQLite3 library version (e.g. "3.6.11").
+
+=== Notes
+
+==== SRFI-18 threads
+
+If you are operating on the same database in multiple threads, you
+must open a new connection per thread.  Reusing the same connection
+will result in corruption.
+
+Be very careful when combining [[#Callbacks and SRFI-18|user-defined functions and SRFI-18 threads]].
+
+=== About this egg
+
+==== Source
+
+[[https://github.com/ursetto/sql-de-lite]]
+
+==== Version history
+
+; 0.8.0 : Chicken 5 support, officially
+; 0.7.2 : Move to github; initial Chicken 5 support from Peter Bex
+; 0.7.1 : Upgrade to SQLite 3.17.0
+; 0.7.0 : Defer caching statements until they are finalized, so the cache never contains running statements. Fixes a cache-expiration bug found by ''andyjpb''; also transient statements no longer need to be finalized manually, and duplicate SQL may be prepared. Remove deprecated milliseconds->time identifier (wasamasa).
+; 0.6.6 : Move to [[https://bitbucket.org/ursetto/sql-de-lite/|bitbucket]]; dummy update for henrietta-cache
+; 0.6.5 : Upgrade to SQLite 3.8.9
+; 0.6.4 : Fix for test on 64bit machine. [[kon lovett]]
+; 0.6.3 : Remove pathname expansion from {{open-database}}.  Use the [[pathname-expand]] egg instead.
+; 0.6.2 : Protect against access to busy handler after handler object freed
+; 0.6.1 : Reverse seed and pstep args to {{register-aggregate-function!}}, make seed optional
+; 0.6.0 : Scalar and aggregate user-defined functions.  Upgrade internal library to 3.7.11.
+; 0.5.1 : Support named parameters.
+; 0.5.0 : Add database-closed?, sql/transient.  Ensure transient statements are finalized in QUERY and EXEC. Disable last-resort finalization of open statements in close-database.  Warn if database is not closed after call-with-database.  Ensure statement column count and column names are correct if the database schema changes.  Make preparing whitespace/comment SQL illegal (for now).  Ensure resurrected transient statements are still transient.
+; 0.4.5 : Add {{fetch-value, -column, -alists, -row, and -rows}}.  Reset {{exec}}ed stmts that return 0 rows, preventing spurious reserved lock after ROLLBACK.  Bind exact numbers to int64, not int.
+; 0.4.4 : Remove deprecated {{milliseconds->time}} call
+; 0.4.3 : byte-vector and pointer types upgraded for compat with Chicken 4.7
+; 0.4.2 : Upgrade to SQLite 3.7.3; fix {{fold-rows*}} (and deprecate it)
+; 0.4.1 : Drop dependency on [[easyffi]]
+; 0.4.0 : Add integrated SQLite3 library
+; 0.3.0 : Initial release
+
+==== Author
+
+[[http://3e8.org|Jim Ursetto]]
+
+==== License
+
+The egg is BSD-licensed.  The SQLite 3 library is public domain.
