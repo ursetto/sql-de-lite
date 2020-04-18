@@ -1,5 +1,8 @@
 ;; -*- scheme -*-
 
+;; Builds with internal SQLite library, or external system library if
+;; -feature sql-de-lite-external-lib is defined.
+
 ((synopsis "SQLite 3 interface")
  (author "Jim Ursetto")
  (category db)
@@ -10,11 +13,11 @@
  (components (extension sql-de-lite
                         (types-file)
                         (cond-expand
-                            ((and (not windows) (not sql-de-lite-external-lib))
-                             (objects sqlite3)
-                             (csc-options -C -Isqlite3))
+                            (sql-de-lite-external-lib
+                             (link-options -L -lsqlite3))
                             (else
-                             (link-options -L -lsqlite3)))
+                             (objects sqlite3)
+                             (csc-options -C -Isqlite3)))
                         (csc-options -O2 -d2 -inline -local
                                      -types sql-de-lite-cache.types)
                         (component-dependencies sql-de-lite-cache)
@@ -23,7 +26,8 @@
                         (types-file)
                         (csc-options -O2 -d0 -inline -local))
              (cond-expand
-                 ((and (not windows) (not sql-de-lite-external-lib))
+                 (sql-de-lite-external-lib)
+                 (else
                   (c-object sqlite3 
                      (source "sqlite3/sqlite3.c")
                      (source-dependencies "sqlite3/sqlite3.h"
@@ -32,11 +36,11 @@
                                   -C -DSQLITE_THREADSAFE=0   ;; avoid linking in pthreads
                                   -C -DSQLITE_ENABLE_FTS3
                                   -C -DSQLITE_ENABLE_FTS3_PARENTHESIS
-                     )))
-                 (else))
+                     ))))
              (program chicken-sqlite3
                       (cond-expand
-                          ((and (not windows) sql-de-lite-external-lib)
+                          ((and windows sql-de-lite-external-lib)) ; skip
+                          (sql-de-lite-external-lib
                            (source "chicken-sqlite3.sh")
                            (custom-build build-chicken-sqlite3))
                           (else 
