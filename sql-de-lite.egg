@@ -10,7 +10,7 @@
  (components (extension sql-de-lite
                         (types-file)
                         (cond-expand
-                            ((and (not windows) (not use-system-sqlite))
+                            ((and (not windows) (not sql-de-lite-external-lib))
                              (objects sqlite3)
                              (csc-options -C -Isqlite3))
                             (else
@@ -23,7 +23,7 @@
                         (types-file)
                         (csc-options -O2 -d0 -inline -local))
              (cond-expand
-                 ((and (not windows) (not use-system-sqlite))
+                 ((and (not windows) (not sql-de-lite-external-lib))
                   (c-object sqlite3 
                      (source "sqlite3/sqlite3.c")
                      (source-dependencies "sqlite3/sqlite3.h"
@@ -36,7 +36,7 @@
                  (else))
              (program chicken-sqlite3
                       (cond-expand
-                          ((and (not windows) use-system-sqlite)
+                          ((and (not windows) sql-de-lite-external-lib)
                            (source "chicken-sqlite3.sh")
                            (custom-build build-chicken-sqlite3))
                           (else 
