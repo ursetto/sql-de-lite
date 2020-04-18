@@ -28,7 +28,11 @@
                      (source "sqlite3/sqlite3.c")
                      (source-dependencies "sqlite3/sqlite3.h"
                                           "sqlite3/sqlite3ext.h")
-                     (csc-options -C -Isqlite3)))
+                     (csc-options -C -Isqlite3
+                                  -C -DSQLITE_THREADSAFE=0   ;; avoid linking in pthreads
+                                  -C -DSQLITE_ENABLE_FTS3
+                                  -C -DSQLITE_ENABLE_FTS3_PARENTHESIS
+                     )))
                  (else))
              (program chicken-sqlite3
                       (cond-expand
