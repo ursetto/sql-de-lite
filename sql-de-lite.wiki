@@ -15,48 +15,50 @@
 
 === Installation
 
-Starting with '''sql-de-lite''' 0.4.0, the SQLite 3 library is
-included with the egg.  It will be automatically built if the system
-library is missing or too old; otherwise, the system library is used.
-You can also override the egg's choice of internal or external library.
+Starting with '''sql-de-lite''' 0.4.0, the SQLite 3 library is included with
+the egg.  Chicken 5 will use this bundled copy by default.  Chicken 4 will use
+the system sqlite3 if present and recent enough, or the bundled copy if not.
 
-In most cases, the following will do the right thing:
+In most cases, the default works:
 
  chicken-install sql-de-lite
 
-The goal of this automatic detection is ensure that you can just
-depend on this extension without requiring a separate library install
-step from your users.
+The goal is to ensure you can depend on this extension without requiring
+your users to install sqlite.
 
-==== Built-in library
+==== Bundled library
 
-SQLite 3.17.0 is included in the egg and will be linked in statically
-if the system library is missing or older than 3.17.0.  The built-in
-library is compiled with FTS3 and FTS4 (full text search) enabled.
+SQLite 3.31.1 is included in the egg and will be linked in statically by
+default on Chicken 5, or if the system library is missing or older than
+3.31.1 on Chicken 4.  The bundled library is compiled with FTS3, FTS4, FTS5,
+JSON1 extensions and URI syntax enabled.
 
-Additionally, a copy of the SQLite3 command shell is installed
-with your Chicken binaries as {{chicken-sqlite3}}.
+For convenience, the SQLite3 command shell is built and installed with your
+Chicken binaries as {{chicken-sqlite3}}.
 
-To force the use of the built-in library, pass the {{sql-de-lite-internal-lib}}
-feature to {{chicken-install}}.
+On Chicken 4, to force the use of the bundled library, pass the
+{{sql-de-lite-internal-lib}} feature to {{chicken-install}}.
 
  chicken-install -D sql-de-lite-internal-lib sql-de-lite
 
 ==== External library
 
-A SQLite library installed in the default system library location will
-be used instead of the built-in library, if present and recent enough.
+On Chicken 4, a SQLite library installed in the default system library location
+will be detected and used instead of the bundled library, if present and recent
+enough.
 
-To force the use of an external library, pass the {{sql-de-lite-external-lib}}
-feature to {{chicken-install}}.
+On Chicken 5, you need to explicitly request to use the external library.
+
+To force the use of an external library on either version, pass the
+{{sql-de-lite-external-lib}} feature to {{chicken-install}}.
 
  chicken-install -D sql-de-lite-external-lib sql-de-lite
 
-If you force an external library to be used, the build will fail
-unless the library is present and recent enough not to cause link
-errors.  The extension assumes you know what you doing, and does
-not enforce a minimum library version.  It is probably necessary to
-use 3.6.x or later, and the latest stable is always recommended.
+For convenience, a {{chicken-sqlite3}} script will be installed; this is a
+small script that calls '''sqlite3'''.
+
+Note: Forcing an external library could fail if it is too old. The absolute
+minimum is probably 3.6.x.
 
 ==== Non-standard library location
 
@@ -71,25 +73,17 @@ location--for example, under your home directory--by setting
 
 If you want to use your own built-in library, retrieve the egg source,
 [[http://www.sqlite.org/download.html|download the SQLite
-amalgamation]] zip file or tarball, then extract it into
-{{sqlite3/}} inside the egg directory.
-
- chicken-install -r sql-de-lite
- cd sql-de-lite
- curl -O http://www.sqlite.org/sqlite-amalgamation-3_7_0_1.zip
- unzip sqlite-amalgamation-3_7_0_1.zip -d sqlite3
- chicken-install          # build and install the egg
-
-All we really need is {{shell.c}}, {{sqlite3.c}}, and {{sqlite3.h}}
-from the amalgamation.  Autoconf is not used.
+amalgamation]] zip file or tarball, then extract its files into
+{{sqlite3/}} inside the egg source.
 
 Currently, there is no way to override the compilation options to
 SQLite3 from {{chicken-install}}.  If you need to do so, edit the
-{{sql-de-lite.setup}} file.
+{{sql-de-lite.setup}} or {{sql-de-lite.egg}} file.
 
 === Low-level interface
 
-The low-level interface maps closely to the underlying library API.  It may be used in tandem with or instead of the high-level API as desired.
+The low-level interface maps closely to the underlying library API.  It may be
+used in tandem with or instead of the high-level API as desired.
 
 ==== Opening the database
 
@@ -859,7 +853,8 @@ Be very careful when combining [[#Callbacks and SRFI-18|user-defined functions a
 
 ==== Version history
 
-; 0.8.0 : Chicken 5 support, officially
+; 0.8.1 : Upgrade to SQLite 3.31.1. Enable FTS4, FTS5, JSON1 extensions and URI syntax. Add build support for Chicken 5.2 and require explicit request to use external lib on C5. Minimum version for Chicken 5 is 5.1 due to build changes.
+; 0.8.0 : Chicken 5.0 support, officially. Chicken 4 is still supported.
 ; 0.7.2 : Move to github; initial Chicken 5 support from Peter Bex
 ; 0.7.1 : Upgrade to SQLite 3.17.0
 ; 0.7.0 : Defer caching statements until they are finalized, so the cache never contains running statements. Fixes a cache-expiration bug found by ''andyjpb''; also transient statements no longer need to be finalized manually, and duplicate SQL may be prepared. Remove deprecated milliseconds->time identifier (wasamasa).
