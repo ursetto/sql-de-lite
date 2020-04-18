@@ -36,6 +36,10 @@
                                   -C -DSQLITE_THREADSAFE=0   ;; avoid linking in pthreads
                                   -C -DSQLITE_ENABLE_FTS3
                                   -C -DSQLITE_ENABLE_FTS3_PARENTHESIS
+                                  -C -DSQLITE_ENABLE_FTS4
+                                  -C -DSQLITE_ENABLE_FTS5
+                                  -C -DSQLITE_ENABLE_JSON1
+                                  -C -DSQLITE_USE_URI
                      ))))
              (program chicken-sqlite3
                       (cond-expand
