@@ -37,6 +37,7 @@ int busy_notification_handler(void *ctx, int times) {
   change-count total-change-count last-insert-rowid
   with-transaction with-deferred-transaction
   with-immediate-transaction with-exclusive-transaction
+  with-savepoint-transaction
   autocommit?
   rollback commit
 
@@ -76,16 +77,20 @@ int busy_notification_handler(void *ctx, int times) {
   (chicken-4
    (import (except chicken reset))
    (import (only extras fprintf sprintf))
-   (require-library lolevel srfi-18)
+   (require-library lolevel srfi-1 srfi-18)
    (import (only lolevel
                  object->pointer object-release object-evict pointer=?))
    (import (only data-structures alist-ref))
+   (import (only srfi-1
+                 fold first second))
    (import (only srfi-18 thread-sleep!))
    (import foreign foreigners)
    (use sql-de-lite-cache))
   (else (import (chicken base) (chicken keyword) (chicken blob))
         (import (chicken condition) (chicken fixnum))
         (import (only (chicken format) fprintf sprintf))
+        (import (only srfi-1
+                      fold first second))
         (import srfi-18)
         (import (only (chicken memory)
                       object->pointer pointer=?))
@@ -178,7 +183,7 @@ int busy_notification_handler(void *ctx, int times) {
   (invoked-busy-handler? db-invoked-busy-handler? set-db-invoked-busy-handler?!)
   (safe-step? db-safe-step? set-db-safe-step!)  ;; global flag indicating step needs safe-lambda
   (statement-cache db-statement-cache)
-  (active-statements db-active-statements))
+  (active-statements db-active-statements set-db-active-statements!))
 (define-record-printer (sqlite-database db port)
   (fprintf port "#<sqlite-database ~A on ~S>"
            (or (db-ptr db)
@@ -197,12 +202,25 @@ int busy_notification_handler(void *ctx, int times) {
   (make-hash-table))
 ;; as a convenience, derive the database from the statement.  forward reference.
 (define (add-active-statement! s)
-  (hash-table-set! (db-active-statements (statement-db s)) s #t))
+  (hash-table-set! (car (db-active-statements (statement-db s))) s #t))
 (define (remove-active-statement! s)
-  (hash-table-delete! (db-active-statements (statement-db s)) s))
-(define (for-each-active-statement db proc)
-  (hash-table-walk (db-active-statements db)
-                   (lambda (k v) (proc k))))
+  ; The statement to remove may be in any transaction frame so make sure we
+  ; remove it from all of them (there should only be one but we don't know
+  ; where).
+  (for-each
+    (lambda (t)
+      (hash-table-delete! t s))
+    (db-active-statements (statement-db s)))
+  (hash-table-delete! (car (db-active-statements (statement-db s))) s))
+(define (for-each-active-statement db proc #!key (all-transactions #f))
+  (for-each
+    (lambda (t)
+      (hash-table-walk
+        t
+        (lambda (k v) (proc k))))
+    (if all-transactions
+      (db-active-statements db)
+      (list (car (db-active-statements db))))))
 
 ;; Thin wrapper around sqlite-statement-handle, adding the two keys
 ;; which allows us to reconstitute a finalized statement.
@@ -608,8 +626,8 @@ int busy_notification_handler(void *ctx, int times) {
       (let ((rv (sqlite3_finalize
                  (statement-ptr stmt)))) ; don't use nonnull-statement-ptr, because that checks cached status
         (dprint 'rv rv)
-        (set-statement-ptr! stmt #f)
         (remove-active-statement! stmt)
+        (set-statement-ptr! stmt #f)
         (cond ((= rv status/abort)
                (database-error
                 (statement-db stmt) rv 'finalize))
@@ -878,7 +896,7 @@ int busy_notification_handler(void *ctx, int times) {
                                      string=?
                                      (lambda (sql stmt)
                                        (finalize-transient stmt)))
-                     (make-active-statements))
+                     (list (make-active-statements)))
             (if db-ptr
                 (database-error (make-db db-ptr filename #f #f #f #f #f) rv
                                 'open-database filename)
@@ -890,7 +908,7 @@ int busy_notification_handler(void *ctx, int times) {
     ;; because SQLite itself may prepare statements under the hood (e.g. with FTS) and a double
     ;; finalize is fatal.  Therefore we must track our own open statements.
     (lru-cache-flush! (db-statement-cache db))
-    (for-each-active-statement db finalize-transient)
+    (for-each-active-statement db finalize-transient all-transactions: #t)
     (let ((rv (sqlite3_close db-ptr)))
       (cond ((eqv? status/ok rv)
              (set-db-ptr! db #f)
@@ -959,35 +977,64 @@ int busy_notification_handler(void *ctx, int times) {
 (define with-transaction
   (let ((tsqls '((deferred . "begin deferred;")
                  (immediate . "begin immediate;")
-                 (exclusive . "begin exclusive;"))))
+                 (exclusive . "begin exclusive;")
+                 (savepoint . "savepoint 'sql-de-lite';"))))
     (lambda (db thunk #!optional (type 'deferred))
+      (define (rollback*)
+        (if (eq? type 'savepoint)
+         (begin
+           (reset-running-queries! db)
+           (exec (sql db "rollback to 'sql-de-lite';"))
+           (if (< (length (db-active-statements db)) 2)
+             (error 'with-transaction "internal error: at least one transaction frame is missing.")
+             (begin
+              (hash-table-merge! (second (db-active-statements db)) (first (db-active-statements db)))
+              (set-db-active-statements! db (cdr (db-active-statements db)))))
+           (exec (sql db "release 'sql-de-lite';")))
+         (rollback db)))
+      (define (commit-or-release)
+        (if (eq? type 'savepoint)
+          (if (< (length (db-active-statements db)) 2)
+            (error 'with-transaction "internal error: at least one transaction frame is missing.")
+            (begin
+              ; Don't reset anything; just move all the queries to the next frame up.
+              (hash-table-merge! (second (db-active-statements db)) (first (db-active-statements db)))
+              (set-db-active-statements! db (cdr (db-active-statements db)))
+              (exec (sql db "release 'sql-de-lite';"))))
+          (commit db)))
       (and (exec (sql db (or (alist-ref type tsqls)
                              (error 'with-transaction
                                     "invalid transaction type" type))))
-           (let ((rv 
-                  (handle-exceptions ex (begin (or (rollback db)
+           (begin
+             (set-db-active-statements! db (cons (make-active-statements) (db-active-statements db)))
+             #t)
+           (let ((rvs
+                  (handle-exceptions ex (begin (or (rollback*)
                                                    (error 'with-transaction
                                                           "rollback failed"))
                                                (abort ex))
-                    (let ((rv (thunk))) ; only 1 return value allowed
-                      (and rv
-                           (commit db)  ; maybe warn on #f
-                           rv)))))
-             (or rv
-                 (if (rollback db)
-                     #f
-                     (error 'with-transaction "rollback failed"))))))))
+                    (let ((rvs (receive (thunk))))
+                      (if (car rvs)
+                        (commit-or-release))  ; maybe warn on #f
+                      rvs))))
+             (if (car rvs)
+               (apply values rvs)
+               (if (rollback*)
+                 (apply values rvs)
+                 (error 'with-transaction "rollback failed"))))))))
 
 (define with-deferred-transaction with-transaction) ; convenience fxns
 (define (with-immediate-transaction db thunk)
   (with-transaction db thunk 'immediate))
 (define (with-exclusive-transaction db thunk)
   (with-transaction db thunk 'exclusive))
+(define (with-savepoint-transaction db thunk)
+  (with-transaction db thunk 'savepoint))
 
 (define (autocommit? db)
   (sqlite3_get_autocommit (nonnull-db-ptr db)))
 
-;; Rollback current transaction.  Reset running queries before doing
+;; Rollback all transactions.  Reset running queries before doing
 ;; so, as rollback would fail if read/write queries are
 ;; running.  Rolling back when no transaction is active returns #t.
 ;; As of 3.7.11, running read queries do not prevent rollback, but we
@@ -995,18 +1042,61 @@ int busy_notification_handler(void *ctx, int times) {
 (define (rollback db)
   (cond ((autocommit? db) #t)
         (else
-         (reset-running-queries! db)
-         (exec (sql db "rollback;")))))
-;; Commit current transaction.  This does not roll back running queries,
+          ; Reset all the statements in all the frames and fold all the statements together in the last frame.
+          ; If length of active statements is 2 then we're good. if it's less
+          ; than 1 then we're in a non-sql-de-lite transaction. if it's greater
+          ; than 2 then we're in at least one savepoint transaction.
+          (let ((l (length (db-active-statements db))))
+            (cond
+              ((< l 2)
+               (warning "(rollback) internal error: at least one transaction frame is missing"))
+              ((> l 2)
+               (warning "(rollback) internal error: nested transactions are in progress"))))
+          (dprint "  rollback:1: currently active statements: " (db-active-statements db))
+          ; Roll up the queries into one transaction frame.
+          (set-db-active-statements!
+            db
+            (list
+              (fold
+                (lambda (v s)
+                  (hash-table-merge! s v))
+                (car (db-active-statements db))
+                (cdr (db-active-statements db)))))
+          (dprint "  rollback:2: currently active statements: " (db-active-statements db))
+          (reset-running-queries! db)
+          (dprint "  rollback:3: currently active statements: " (db-active-statements db))
+          (exec (sql db "rollback;")))))
+;; Commit all transactions.  This does not roll back running queries,
 ;; because running read queries are acceptable, and the behavior in the
 ;; presence of pending write statements is unclear.  If the commit
 ;; fails, you can always rollback, which will reset the pending queries.
 (define (commit db)
   (cond ((autocommit? db) #t)
         (else
-         ;; (reset-running-queries! db)
-         (exec (sql db "commit;")))))
-;; Forcibly reset all running queries (tracked in the active statement list).
+          ; fold all the statements together in the last frame.
+          ; If length of active statements is 2 then we're good. if it's less
+          ; than 1 then we're in a non-sql-de-lite transaction. if it's greater
+          ; than 2 then we're in at least one savepoint transaction.
+          (let ((l (length (db-active-statements db))))
+            (cond
+              ((< l 2)
+               (warning "(commit) internal error: at least one transaction frame is missing"))
+              ((> l 2)
+               (warning "(commit) internal error: nested transactions are in progress"))))
+          (dprint "  commit:1: currently active statements: " (db-active-statements db))
+          ; Roll up the queries into one transaction frame.
+          (set-db-active-statements!
+            db
+            (list
+              (fold
+                (lambda (v s)
+                  (hash-table-merge! s v))
+                (car (db-active-statements db))
+                (cdr (db-active-statements db)))))
+          (dprint "  commit:2: currently active statements: " (db-active-statements db))
+          ;; (reset-running-queries! db)
+          (exec (sql db "commit;")))))
+;; Forcibly reset all running queries in the current transaction frame (tracked in the active statement list).
 (define (reset-running-queries! db)
   (for-each-active-statement db
                              (lambda (s)
