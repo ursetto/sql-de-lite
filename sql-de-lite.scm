@@ -77,7 +77,7 @@ int busy_notification_handler(void *ctx, int times) {
   (chicken-4
    (import (except chicken reset))
    (import (only extras fprintf sprintf))
-   (require-library lolevel srfi-18)
+   (require-library lolevel srfi-1 srfi-18)
    (import (only lolevel
                  object->pointer object-release object-evict pointer=?))
    (import (only data-structures alist-ref))
