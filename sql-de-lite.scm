@@ -19,6 +19,7 @@ int busy_notification_handler(void *ctx, int times) {
 (module sql-de-lite
  (
   error-code error-message
+  load-extension!
   open-database close-database
   prepare prepare-transient
   finalize resurrect
@@ -887,16 +888,21 @@ int busy_notification_handler(void *ctx, int times) {
       (let* ((rv (sqlite3_open filename
                                (location db-ptr))))
         (if (eqv? rv status/ok)
-            (make-db db-ptr
-                     filename
-                     #f                       ; busy-handler
-                     (object-evict (vector #f)) ; invoked-busy?
-                     #f                       ; safe-step?
-                     (make-lru-cache (prepared-cache-size)
-                                     string=?
-                                     (lambda (sql stmt)
-                                       (finalize-transient stmt)))
-                     (list (make-active-statements)))
+	    (begin
+	      ((foreign-lambda* void
+		   (((c-pointer "sqlite3") db))
+		 "sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);")
+	       db-ptr)
+              (make-db db-ptr
+                       filename
+                       #f                       ; busy-handler
+                       (object-evict (vector #f)) ; invoked-busy?
+                       #f                       ; safe-step?
+                       (make-lru-cache (prepared-cache-size)
+                                       string=?
+                                       (lambda (sql stmt)
+					 (finalize-transient stmt)))
+                       (list (make-active-statements))))
             (if db-ptr
                 (database-error (make-db db-ptr filename #f #f #f #f #f) rv
                                 'open-database filename)
@@ -940,19 +946,21 @@ int busy_notification_handler(void *ctx, int times) {
   (int->status (sqlite3_errcode (nonnull-db-ptr db))))
 (define (error-message db)
   (sqlite3_errmsg (nonnull-db-ptr db)))
-(define (database-error db code where . args)
+(define (database-error* db code where message . args)
   (and (raise-database-errors)
-       (apply raise-database-error db code where args)))
-(define (raise-database-error db code where . args)
+       (apply raise-database-error db code where message args)))
+(define (database-error db code where . args)
+  (apply raise-database-error db code where #f args))
+(define (raise-database-error db code where message . args)
   ;; status/misuse may not set the error code and message; signal
   ;; a generic misuse error if we believe that has happened.
   ;; [ref. http://www.sqlite.org/c3ref/errcode.html]
   (if (or (not (= code status/misuse))
           (eqv? (error-code db) 'misuse))
       (raise-database-error/status
-       db (int->status code) where (error-message db) args)
+       db (int->status code) where (or message (error-message db)) args)
       (raise-database-error/status
-       db 'misuse where "misuse of interface" args)))
+       db 'misuse where (or message "misuse of interface") args)))
 (define (raise-database-error/status db status where message args)
   (abort
    (make-composite-condition
@@ -1362,7 +1370,29 @@ int busy_notification_handler(void *ctx, int times) {
                                         #f #f #f #f #f)))
     (if (= status/ok rv)
         (void)
-        (database-error db rv 'unregister-function!)))))  ; module
+        (database-error db rv 'unregister-function!))))
+
+(define sqlite3_free
+  (foreign-lambda void sqlite3_free c-pointer))
+
+(define (load-extension! db filename #!optional entry-point)
+  (let-location ((error-message-ptr (c-pointer "char")))
+    (let* ((rv (sqlite3_load_extension (nonnull-db-ptr db)
+                                       filename
+                                       entry-point
+                                       #$error-message-ptr))
+	   (error-message
+	    (if (not error-message-ptr) #f
+		(begin0
+		 ((foreign-lambda* c-string
+		      (((c-pointer char) p))
+		    "C_return(p);")
+		  error-message-ptr)
+		 (sqlite3_free error-message-ptr)))))
+      (when (not (= status/ok rv))
+          (database-error* db rv 'load-extension! error-message)))))
+
+)  ; module
 
 ;; Copyright (c) 2009-2015 Jim Ursetto.  All rights reserved.
 ;; 

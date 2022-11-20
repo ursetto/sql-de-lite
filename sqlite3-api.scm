@@ -472,6 +472,16 @@
         (c-pointer void)
         "sqlite3_aggregate_context"
         (c-pointer "sqlite3_context")
-        integer))))
+        integer)))
+
+  (begin
+    (define sqlite3_load_extension
+      (foreign-lambda
+        integer
+        "sqlite3_load_extension"
+        (c-pointer "sqlite3")
+        c-string
+        c-string
+        (c-pointer (c-pointer char))))))
 
 ;;; END OF FILE
