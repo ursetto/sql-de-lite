@@ -9,7 +9,7 @@
  (license "BSD")
  (dependencies foreigners object-evict srfi-1 srfi-18 srfi-69) ;; And bind if you want to update sqlite3-api
  (test-dependencies test compile-file)
- (version "0.9.0")
+ (version "0.10.0")
  (components (extension sql-de-lite
                         (types-file)
                         (cond-expand
