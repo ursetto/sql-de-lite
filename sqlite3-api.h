@@ -109,3 +109,9 @@ int sqlite3_value_numeric_type(sqlite3_value*);
 
 void *sqlite3_user_data(sqlite3_context*);
 void *sqlite3_aggregate_context(sqlite3_context*, int nBytes);
+int sqlite3_load_extension(
+  sqlite3 *db,          /* Load the extension into this database connection */
+  const char *zFile,    /* Name of the shared library containing extension */
+  const char *zProc,    /* Entry point.  Derived from zFile if 0 */
+  char **pzErrMsg       /* Put error message here if not 0 */
+);

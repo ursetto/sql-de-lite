@@ -2,11 +2,13 @@
   (chicken-4
    (use test)
    (use sql-de-lite)
+   (use utils)                          ; compile-file
    (use files)                          ; create-temporary-file
    (use posix))                         ; delete-file
   (else
-   (import test sql-de-lite (chicken file) (chicken blob)
-           (chicken string) (chicken format))))
+   (import test sql-de-lite compile-file (chicken file) (chicken blob)
+           (chicken pathname) (chicken string) (chicken format)
+           (chicken platform))))
 
 ;; Concatenate string literals into a single literal at compile time.
 ;; (string-literal "a" "b" "c") -> "abc"
@@ -1170,6 +1172,44 @@
 ;;         (and (step s) (error "step should have failed due to lock"))))
 ;;     ;; Statement should successfully be finalized in let-prepare
 ;;     (reset *s1*)))    ;; reset should fail with finalized statement error
+
+(let* (
+       (test-directory (or (pathname-directory ##sys#current-source-filename) "."))
+       (source (make-pathname test-directory "rot13.c"))
+       (load-library-extension
+        (cond ((eq? (software-type) 'windows) ".dll")
+              ((eq? (software-version) 'macosx) ".dylib")
+              (else ".so")))
+       (shared-object (make-pathname test-directory
+                                     (string-append "rot13" load-library-extension)))
+       (ext (pathname-strip-extension shared-object))
+       (include-directory (make-pathname
+			   `(,test-directory "..") "sqlite3")))
+  (compile-file
+   source output-file: shared-object load: #f
+   options: (cons
+	     (string-append "-I" include-directory) (compile-file-options)))
+  (test-group "extensions"
+    (test
+     "Calling function defined by extension"
+     '("uryyb jbeyq")
+     (call-with-database
+      ":memory:"
+      (lambda (db)
+	(load-extension! db ext #f)
+	(query fetch-row (sql db "select rot13('hello world')")))))
+    (test-error
+     "Unknown extension filename raises exception"
+     (call-with-database
+      ":memory:"
+      (lambda (db)
+	(load-extension! db (string-append test-directory "bogusobject") #f))))
+    (test-error
+     "Unknown extension entrypoint raises exception"
+     (call-with-database
+      ":memory:"
+      (lambda (db)
+	(load-extension! db ext "bogus_function"))))))
 
 (include "stmt-repro.scm")
 (include "cache.scm")
