@@ -809,6 +809,16 @@ a callback (even one created with another egg).
 User-defined functions have not been heavily stress-tested in the presence
 of multiple threads, so caution is advised.
 
+=== Extensions
+
+<procedure>(load-extension! db filename #!optional entry-point)</procedure>
+
+Loads a SQLite extension library from {{filename}} and initializes it by calling {{entry-point}}, a string containing the name of a C function. If {{filename}} is not found, it will try {{filename.so}}, {{filename.dylib}} or {{filename.dll}} as appropriate for the platform. If {{entry-point}} is omitted or {{#f}}, SQLite guesses the entry point name from the filename. See the documentation for [[https://sqlite.org/c3ref/load_extension.html|sqlite3_load_extension]] for further details.
+
+As an example, see [[https://github.com/ursetto/sql-de-lite/blob/70833b5aae10de136963b0c488fda2e974a3bcef/tests/run.scm#L1199|tests/run.scm]] and [[https://github.com/ursetto/sql-de-lite/blob/70833b5aae10de136963b0c488fda2e974a3bcef/tests/rot13.c|tests/rot13.c]] in the egg source, which define and call a rot13 function.
+
+'''Warning.''' This allows arbitrary code to be loaded and executed from disk at runtime, and could conceivably cause the extension's state to get out of sync. Please proceed with extreme caution.
+
 === Miscellaneous
 
 <procedure>(schema db)</procedure>
@@ -853,6 +863,8 @@ Be very careful when combining [[#Callbacks and SRFI-18|user-defined functions a
 
 ==== Version history
 
+; 0.10.0 : Add load-extension! by [[https://github.com/CMB|CMB]].
+; 0.9.0 : Add savepoint transaction support (with-savepoint-transaction) courtesy of Andy Bennett (@andyjpb).
 ; 0.8.1 : Upgrade to SQLite 3.31.1. Enable FTS4, FTS5, JSON1 extensions and URI syntax. Add build support for Chicken 5.2 and require explicit request to use external lib on C5. Minimum version for Chicken 5 is 5.1 due to build changes.
 ; 0.8.0 : Chicken 5.0 support, officially. Chicken 4 is still supported.
 ; 0.7.2 : Move to github; initial Chicken 5 support from Peter Bex
