@@ -2,12 +2,13 @@
   (chicken-4
    (use test)
    (use sql-de-lite)
-   (use compile-file)
+   (use utils)                          ; compile-file
    (use files)                          ; create-temporary-file
    (use posix))                         ; delete-file
   (else
    (import test sql-de-lite compile-file (chicken file) (chicken blob)
-           (chicken pathname) (chicken string) (chicken format))))
+           (chicken pathname) (chicken string) (chicken format)
+           (chicken platform))))
 
 ;; Concatenate string literals into a single literal at compile time.
 ;; (string-literal "a" "b" "c") -> "abc"
@@ -1175,10 +1176,15 @@
 (let* (
        (test-directory (or (pathname-directory ##sys#current-source-filename) "."))
        (source (make-pathname test-directory "rot13.c"))
-       (shared-object (make-pathname test-directory "rot13.so"))
+       (load-library-extension
+        (cond ((eq? (software-type) 'windows) ".dll")
+              ((eq? (software-version) 'macosx) ".dylib")
+              (else ".so")))
+       (shared-object (make-pathname test-directory
+                                     (string-append "rot13" load-library-extension)))
        (ext (pathname-strip-extension shared-object))
        (include-directory (make-pathname
-			   `(,test-directory "..") "sqlite")))
+			   `(,test-directory "..") "sqlite3")))
   (compile-file
    source output-file: shared-object load: #f
    options: (cons
