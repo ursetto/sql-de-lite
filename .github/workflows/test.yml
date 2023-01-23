@@ -36,15 +36,21 @@ jobs:
       - name: Display Chicken version
         run: $CHICKEN_PREFIX/bin/csi -version
 
+      - name: Get hash of egg dependencies
+        id: deps
+        run: |
+            deps=$($CHICKEN_PREFIX/bin/csi -e "(print (assoc 'dependencies (read)))" < *.egg)
+            echo "deps=$deps" >> $GITHUB_OUTPUT
+            echo "deps_hash=$(echo $deps | md5sum)" >> $GITHUB_OUTPUT
+
       - name: Cache Chicken eggs
         id: cache-eggs
         uses: actions/cache@v3
         with:
           path: ~/.cache/chicken-install
-          # Note: This hashes overzealously, since only the "dependencies" line should be relevant.
-          # For example, this will rebuild the egg cache if you bump the version. You could
-          # grep out the dependencies or run csi and assoc it out.
-          key: chicken-eggs-${{ env.CHICKEN_VERSION }}-${{ hashFiles('*.egg') }}
+          # Note: Hashing the entire .egg file is overzealous. Instead, hash just the
+          # dependencies.
+          key: chicken-eggs-${{ env.CHICKEN_VERSION }}-${{ steps.deps.outputs.deps_hash }}
 
       - name: Install and test egg
         run: |
