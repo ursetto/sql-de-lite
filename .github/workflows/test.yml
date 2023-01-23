@@ -37,8 +37,11 @@ jobs:
         id: save-chicken
         uses: actions/cache/save@v3
         with:
-          path: ${{ steps.restore-chicken.outputs.path }}
-          key: ${{ steps.restore-chicken.outputs.key }}
+          # .key output does not appear to work.
+          # path: ${{ steps.restore-chicken.outputs.path }}
+          # key: ${{ steps.restore-chicken.outputs.key }}
+          path: ${{ env.CHICKEN_PREFIX }}
+          key: chicken-${{ env.CHICKEN_VERSION }}
         if: steps.restore-chicken.outputs.cache-hit != 'true'
 
       - name: Display Chicken version
