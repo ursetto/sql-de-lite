@@ -1,4 +1,4 @@
-name: chicken cache
+name: Build and test egg
 on:
   workflow_dispatch:
   push:
@@ -8,7 +8,7 @@ env:
 
 jobs:
   chicken:
-    name: Chicken cache
+    name: Build and test egg
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
