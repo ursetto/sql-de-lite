@@ -17,9 +17,9 @@ jobs:
         run: |
           echo "CHICKEN_PREFIX=$HOME/local/chicken-$CHICKEN_VERSION" >> $GITHUB_ENV
 
-      - name: Cache Chicken compiler
-        id: cache-chicken
-        uses: actions/cache@v3
+      - name: Restore Chicken compiler
+        id: restore-chicken
+        uses: actions/cache/restore@v3
         with:
           path: ${{ env.CHICKEN_PREFIX }}
           key: chicken-${{ env.CHICKEN_VERSION }}
@@ -31,7 +31,15 @@ jobs:
           wget -O - https://code.call-cc.org/releases/$CHICKEN_VERSION/chicken.tar.gz | tar -zxC $SRC
           cd $SRC/chicken-$CHICKEN_VERSION
           make PLATFORM=linux PREFIX=$CHICKEN_PREFIX install
-        if: steps.cache-chicken.outputs.cache-hit != 'true'
+        if: steps.restore-chicken.outputs.cache-hit != 'true'
+
+      - name: Save Chicken compiler
+        id: save-chicken
+        uses: actions/cache/save@v3
+        with:
+          path: ${{ steps.restore-chicken.outputs.path }}
+          key: ${{ steps.restore-chicken.outputs.key }}
+        if: steps.restore-chicken.outputs.cache-hit != 'true'
 
       - name: Display Chicken version
         run: $CHICKEN_PREFIX/bin/csi -version
@@ -40,8 +48,8 @@ jobs:
         id: deps
         run: |
             deps=$($CHICKEN_PREFIX/bin/csi -e "(print (assoc 'dependencies (read)))" < *.egg)
-            echo "deps=$deps" >> $GITHUB_OUTPUT
-            echo "deps_hash=$(echo $deps | md5sum)" >> $GITHUB_OUTPUT
+            echo "Dependencies: $deps"
+            echo "deps_hash=$(echo $deps | md5sum | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Cache Chicken eggs
         id: cache-eggs
