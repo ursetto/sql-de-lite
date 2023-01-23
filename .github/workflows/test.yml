@@ -42,7 +42,10 @@ jobs:
         if: steps.restore-chicken.outputs.cache-hit != 'true'
 
       - name: Display Chicken version
-        run: $CHICKEN_PREFIX/bin/csi -version
+        run: |
+            $CHICKEN_PREFIX/bin/csi -version
+            echo "Installed eggs:"
+            $CHICKEN_PREFIX/bin/chicken-status
 
       - name: Get hash of egg dependencies
         id: deps
