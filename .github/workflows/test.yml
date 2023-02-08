@@ -43,7 +43,7 @@ jobs:
       - name: Install and test egg
         run: |
           chicken-install -test
-          csi -R sql-de-lite '(print "SQLite version: " library-version)' ;;
+          csi -R sql-de-lite '(print "SQLite version: " library-version)'
 
       # Note: Installing the egg will also cache it for later. That will be unconditionally
       # overwritten on next install, but it might be a good idea to remove it.
