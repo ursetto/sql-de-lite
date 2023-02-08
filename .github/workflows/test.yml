@@ -13,6 +13,7 @@ jobs:
           - ubuntu-latest
         chicken-version:
           - 5.3.0
+          - 4.13.0
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
@@ -42,7 +43,7 @@ jobs:
       - name: Install and test egg
         run: |
           chicken-install -test
-          csi -e '(import sql-de-lite) (print "SQLite version:" library-version)'
+          csi -e '(import sql-de-lite) (print "SQLite version: " library-version)'
 
       # Note: Installing the egg will also cache it for later. That will be unconditionally
       # overwritten on next install, but it might be a good idea to remove it.
