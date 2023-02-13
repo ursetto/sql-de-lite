@@ -1,0 +1,52 @@
+name: Build and test sql-de-lite egg
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+jobs:
+  chicken:
+    name: Build and test egg
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        chicken-version:
+          - 5.3.0
+          - 5.2.0
+          # - 5.1.0 # sqlite3.o not compiled with -fPIC (https://bugs.call-cc.org/ticket/1659)
+          # - 5.0.0 # Not compatible, cond-expand not allowed in .setup
+          - 4.13.0
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: ursetto/chicken-toolchain@v0
+        id: chicken
+        with:
+          chicken-version: ${{ matrix.chicken-version }}
+
+      - name: Get hash of egg dependencies
+        # Hashing the entire .egg file is overzealous. Instead, hash just the
+        # dependencies.
+        id: egg-deps
+        run: |
+          deps=$(csi -e "(print (assoc 'dependencies (read)))" < *.egg)
+          echo "Dependencies: $deps"
+          echo "deps_hash=$(echo $deps | sha256sum | cut -c1-12)" >> $GITHUB_OUTPUT
+
+      - name: Cache Chicken eggs
+        id: cache-eggs
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/chicken-install
+          # Implicitly included in the key (but not visible in the UI) is the OS version.
+          key: chicken-eggs-${{ matrix.chicken-version }}-${{ steps.egg-deps.outputs.deps_hash }}
+
+      - name: Install and test egg
+        run: |
+          chicken-install -test
+          csi -R sql-de-lite -e '(print "SQLite version: " library-version)'
+
+      # Note: Installing the egg will also cache it for later. That will be unconditionally
+      # overwritten on next install, but it might be a good idea to remove it.
