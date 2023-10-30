@@ -694,10 +694,10 @@
              (exec (sql db "select rowid, * from cache where rowid = ?;")
                    rowid))
        (test (conc "last-insert-rowid on int64 rowid (numbers ok) " rowid)
-             (cond-expand (64bit rowid) (else (exact->inexact rowid)))
+             (cond-expand ((or 64bit (not chicken-4)) rowid) (else (exact->inexact rowid)))
              (last-insert-rowid db))
        (test (conc "retrieve row containing int64 rowid (numbers ok) " rowid)
-             `(,(cond-expand (64bit rowid) (else (exact->inexact rowid))) "jimmy" "dunno")
+             `(,(cond-expand ((or 64bit (not chicken-4)) rowid) (else (exact->inexact rowid))) "jimmy" "dunno")
              (exec (sql db "select rowid, * from cache where rowid = ?;")
                    rowid))))))
 
