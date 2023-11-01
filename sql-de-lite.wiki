@@ -863,6 +863,7 @@ Be very careful when combining [[#Callbacks and SRFI-18|user-defined functions a
 
 ==== Version history
 
+; 0.10.1 : Bugfix for tests on 32-bit platforms (sjamaan)
 ; 0.10.0 : Add load-extension! by [[https://github.com/CMB|CMB]].
 ; 0.9.0 : Add savepoint transaction support (with-savepoint-transaction) courtesy of Andy Bennett (@andyjpb).
 ; 0.8.1 : Upgrade to SQLite 3.31.1. Enable FTS4, FTS5, JSON1 extensions and URI syntax. Add build support for Chicken 5.2 and require explicit request to use external lib on C5. Minimum version for Chicken 5 is 5.1 due to build changes.
